@@ -123,25 +123,15 @@ function renderDynamicFog() {
 }
 // Функция изменения размеров canvas и виртуального мира!!!
 function resizeCanvas() {
-  // Сохраняем старые размеры
-  const oldWidth = canvas.width;
-  const oldHeight = canvas.height;
-
   canvas.width = window.innerWidth;
   canvas.height = window.innerHeight;
+  // Размеры виртуального мира – в 3 раза больше видимой области
   worldWidth = canvas.width * 3;
   worldHeight = canvas.height * 3;
+  console.log("worldWidth:", worldWidth, "worldHeight:", worldHeight);
   starField.init();
-  initFogOfWar();
-
-  // Определяем изменение центра canvas
-  const dx = canvas.width / 2 - oldWidth / 2;
-  const dy = canvas.height / 2 - oldHeight / 2;
-  // Корректируем смещение камеры, чтобы сохранить относительный вид
-  camera.offsetX += dx;
-  camera.offsetY += dy;
+  initFogOfWar(); // Инициализируем сетку тумана войны при изменении размеров
 }
-
 
 window.addEventListener("resize", resizeCanvas);
 
