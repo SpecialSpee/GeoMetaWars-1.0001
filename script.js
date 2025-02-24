@@ -143,7 +143,7 @@ function resizeCanvas() {
 }
 
 
-//window.addEventListener("resize", resizeCanvas);
+window.addEventListener("resize", resizeCanvas);
 
 resizeCanvas();
 /* === Спавн баз игрока и ИИ === */
