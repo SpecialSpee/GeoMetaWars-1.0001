@@ -134,6 +134,10 @@ function resizeCanvas() {
 }
 
 window.addEventListener("resize", resizeCanvas);
+window.addEventListener("orientationchange", () => {
+  setTimeout(resizeCanvas, 300);
+});
+
 
 resizeCanvas();
 /* === Спавн баз игрока и ИИ === */
