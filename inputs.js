@@ -1,32 +1,6 @@
 let isWallDragging = false;
 let wallDragStart = { x: 0, y: 0 };
 let currentWallDragZone = null;
-// Баллы за уничтожение (отдельные от стоимости ресурсов)
-let playerScore = 0;
-const SCORE_WORKER      = 10;
-const SCORE_REPAIRMAN   = 15;
-const SCORE_FIGHTER     = 20;
-const SCORE_ASSAULT     = 30;
-const SCORE_ELITE       = 40;
-const SCORE_BUILDING    = 50; // Для любого здания (можно настроить индивидуально)
-
-
-const btnCollect = document.createElement("button");
-btnCollect.innerText = "Собрать баллы";
-btnCollect.style.marginRight = "5px";
-gameMenu.appendChild(btnCollect);
-
-btnCollect.addEventListener("click", () => {
-  // Читаем текущую сумму накопленных баллов из localStorage (если есть)
-  let totalScore = parseInt(localStorage.getItem("totalScore") || "0", 10);
-  totalScore += playerScore;
-  localStorage.setItem("totalScore", totalScore);
-  alert("За уничтожение врага начислено " + playerScore + " баллов.\nОбщий счет: " + totalScore);
-  // Сбрасываем текущий счет
-  playerScore = 0;
-});
-
-
 
 
 // Обработчики перетаскивания карты
@@ -157,42 +131,6 @@ function enemyNear(building, radius) {
   return enemyFound;
 }
 
-// Вспомогательная функция для удаления юнита и корректировки счетчиков в зданиях
-function removeUnit(unit) {
-	// Если уничтожённый юнит принадлежит врагу и убийца — игрок, начисляем баллы.
-  if (unit.owner !== "player" && killerOwner === "player") {
-    if (unit.type === "worker") {
-      playerScore += SCORE_WORKER;
-    } else if (unit.type === "repairman") {
-      playerScore += SCORE_REPAIRMAN;
-    } else if (unit.type === "fighter") {
-      playerScore += SCORE_FIGHTER;
-    } else if (unit.type === "assault") {
-      playerScore += SCORE_ASSAULT;
-    } else if (unit.type === "elite") {
-      playerScore += SCORE_ELITE;
-    }
-  }
-	
-  if (unit.type === "worker" && unit.homeWarehouse) {
-    unit.homeWarehouse.workers = Math.max(0, unit.homeWarehouse.workers - 1);
-  }
-  if (unit.type === "repairman" && unit.homeWorkshop) {
-    unit.homeWorkshop.repairman = Math.max(0, unit.homeWorkshop.repairman - 1);
-  }
-  gameState.units = gameState.units.filter(u => u !== unit);
-  selectedUnits = selectedUnits.filter(u => u !== unit);
-}
-
-function removeBuilding(building, killerOwner) {
-  // Если здание принадлежит врагу и убийца — игрок, начисляем баллы.
-  if (building.owner !== "player" && killerOwner === "player") {
-    playerScore += SCORE_BUILDING;
-  }
-  gameState.buildings = gameState.buildings.filter(b => b !== building);
-}
-
-
 function updateGameState(deltaTime) {
   updateUnits(deltaTime);
   updateResources(deltaTime);
@@ -216,7 +154,8 @@ function updateGameState(deltaTime) {
                 gameState.buildings = gameState.buildings.filter(b => b !== target);
                 if (target === aiBase) { aiBase = null; }
               } else if (target instanceof Unit) {
-                removeUnit(target, bullet.shooter.owner);
+                gameState.units = gameState.units.filter(u => u !== target);
+                selectedUnits = selectedUnits.filter(u => u !== target);
               }
             }
           });
@@ -233,6 +172,7 @@ function updateGameState(deltaTime) {
       bullet.x += Math.cos(bullet.angle) * bullet.speed * deltaTime;
       bullet.y += Math.sin(bullet.angle) * bullet.speed * deltaTime;
       bullet.lifetime -= deltaTime;
+      // Обработка столкновений для ракет (аналогично обычным пулям)
       const potentialTargets = gameState.units.concat(gameState.buildings)
         .filter(obj => obj.owner !== bullet.shooter.owner && obj.health > 0);
       for (let obj of potentialTargets) {
@@ -241,24 +181,28 @@ function updateGameState(deltaTime) {
           obj.health -= bullet.damage;
           const splashTargets = getEnemiesInRange({ x: bullet.x, y: bullet.y }, bullet.splashRadius);
           splashTargets.forEach(target => {
-            if (target.owner !== bullet.shooter.owner && target !== obj && target.health > 0) {
-              target.health -= bullet.splashDamage;
-              if (target.health <= 0) {
-                if (target instanceof Building) {
-                  spawnParticles(target.x, target.y, "red");
-                  gameState.buildings = gameState.buildings.filter(b => b !== target);
-                  if (target === aiBase) { aiBase = null; }
-                } else if (target instanceof Unit) {
-                  removeUnit(target, bullet.shooter.owner);
-                }
-              }
-            }
-          });
+  if (target.owner !== bullet.shooter.owner && target !== obj && target.health > 0) {
+    target.health -= bullet.splashDamage;
+    if (target.health <= 0) {
+      // Немедленно удалить цель или установить health в 0, чтобы избежать дальнейших изменений
+      if (target instanceof Building) {
+        spawnParticles(target.x, target.y, "red");
+        gameState.buildings = gameState.buildings.filter(b => b !== target);
+        if (target === aiBase) { aiBase = null; }
+      } else if (target instanceof Unit) {
+        gameState.units = gameState.units.filter(u => u !== target);
+        selectedUnits = selectedUnits.filter(u => u !== target);
+      }
+    }
+  }
+});
+
           bullet.alive = false;
           spawnParticles(bullet.x, bullet.y, "orange");
           if (obj.health <= 0) {
             if (obj instanceof Unit) {
-              removeUnit(abj,bullet.shooter.owner);
+              gameState.units = gameState.units.filter(u => u !== obj);
+              selectedUnits = selectedUnits.filter(u => u !== obj);
             } else if (obj instanceof Building) {
               spawnParticles(obj.x, obj.y, "red");
               gameState.buildings = gameState.buildings.filter(b => b !== obj);
@@ -283,7 +227,8 @@ function updateGameState(deltaTime) {
           spawnParticles(bullet.x, bullet.y, "orange");
           if (unit.health <= 0) {
             spawnParticles(unit.x, unit.y, "red");
-            removeUnit(target, bullet.shooter.owner);
+            gameState.units = gameState.units.filter(u => u !== unit);
+            selectedUnits = selectedUnits.filter(u => u !== unit);
           }
           break;
         }
@@ -321,7 +266,6 @@ function updateGameState(deltaTime) {
   updateBase3NavButton();
   autoRepairDamagedObjects();
 }
-
 
 function gameLoop(time) {
   const deltaTime = (time - lastTime) / 1000;
