@@ -1,9 +1,3 @@
-window.addEventListener("resize", resizeCanvas);
-window.addEventListener("orientationchange", () => {
-  setTimeout(resizeCanvas, 300);
-});
-
-
 // Функция отрисовки постоянного тумана (показывает, что участок уже был открыт)
 // Здесь мы можем, например, затемнять его слегка (например, прозрачный серый цвет),
 // чтобы скрыть ресурсы, но не затемнять полностью текущую динамику.
@@ -129,18 +123,27 @@ function renderDynamicFog() {
 }
 // Функция изменения размеров canvas и виртуального мира!!!
 function resizeCanvas() {
+  // Сохраняем старые размеры
+  const oldWidth = canvas.width;
+  const oldHeight = canvas.height;
+
   canvas.width = window.innerWidth;
   canvas.height = window.innerHeight;
-  // Размеры виртуального мира – в 3 раза больше видимой области
   worldWidth = canvas.width * 3;
   worldHeight = canvas.height * 3;
-  console.log("worldWidth:", worldWidth, "worldHeight:", worldHeight);
   starField.init();
-  initFogOfWar(); // Инициализируем сетку тумана войны при изменении размеров
+  initFogOfWar();
+
+  // Определяем изменение центра canvas
+  const dx = canvas.width / 2 - oldWidth / 2;
+  const dy = canvas.height / 2 - oldHeight / 2;
+  // Корректируем смещение камеры, чтобы сохранить относительный вид
+  camera.offsetX += dx;
+  camera.offsetY += dy;
 }
 
 
-
+//window.addEventListener("resize", resizeCanvas);
 
 resizeCanvas();
 /* === Спавн баз игрока и ИИ === */
@@ -718,83 +721,12 @@ function showSingleBuildZone(building, buildingType) {
   document.body.appendChild(zone);
   console.log("Зона для здания", building.type, "с опцией", buildingType, "создана. Экранные координаты:", screenPos);
 }
-
 // Функция для удаления временных DOM-элементов (build zones, меню, рамки выделения)
 function clearBuildZones() {
   document.querySelectorAll(".buildZone").forEach(zone => zone.remove());
   const buildMenu = document.getElementById("buildMenu");
   if (buildMenu) buildMenu.remove();
 }
-
-
-
-
-
-// Обработчики для мобильных устройств (touch-события)
-let lastTouchDistance = null;
-
-canvas.addEventListener("touchstart", e => {
-  if (e.touches.length === 2) {
-    // Для масштабирования — запоминаем начальное расстояние между двумя пальцами
-    lastTouchDistance = Math.hypot(
-      e.touches[0].clientX - e.touches[1].clientX,
-      e.touches[0].clientY - e.touches[1].clientY
-    );
-  } else if (e.touches.length === 1) {
-    // Для перетаскивания карты, как при mousedown
-    isDragging = true;
-    dragStart = { x: e.touches[0].clientX, y: e.touches[0].clientY };
-    cameraStart = { offsetX: camera.offsetX, offsetY: camera.offsetY };
-  }
-});
-
-canvas.addEventListener("touchmove", e => {
-  if (e.touches.length === 2) {
-    // Обработка pinch-zoom
-    const currentDistance = Math.hypot(
-      e.touches[0].clientX - e.touches[1].clientX,
-      e.touches[0].clientY - e.touches[1].clientY
-    );
-    if (lastTouchDistance) {
-      let scaleChange = currentDistance / lastTouchDistance;
-      let newScale = camera.scale * scaleChange;
-      // Ограничиваем масштаб (например, min = 0.1, max = MAX_SCALE)
-      newScale = Math.max(0.1, Math.min(newScale, MAX_SCALE));
-      // Вычисляем центр между пальцами
-      const midX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
-      const midY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
-      const worldPoint = screenToWorld(midX, midY);
-      camera.scale = newScale;
-      const newScreenPoint = worldToScreen(worldPoint.x, worldPoint.y);
-      camera.offsetX += midX - newScreenPoint.x;
-      camera.offsetY += midY - newScreenPoint.y;
-    }
-    lastTouchDistance = currentDistance;
-  } else if (e.touches.length === 1 && isDragging) {
-    // Обработка перетаскивания
-    const dx = e.touches[0].clientX - dragStart.x;
-    const dy = e.touches[0].clientY - dragStart.y;
-    camera.offsetX = cameraStart.offsetX + dx;
-    camera.offsetY = cameraStart.offsetY + dy;
-  }
-  // Предотвращаем стандартное поведение браузера (например, скроллинг)
-  e.preventDefault();
-});
-
-canvas.addEventListener("touchend", e => {
-  if (e.touches.length < 2) {
-    lastTouchDistance = null;
-  }
-  if (e.touches.length === 0) {
-    isDragging = false;
-  }
-});
-
-
-
-
-
-
 // Функция обработки очереди команд
 function processCommandQueue(unit) {
   if (unit.commandQueue.length === 0) {
