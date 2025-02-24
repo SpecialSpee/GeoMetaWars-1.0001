@@ -1,3 +1,9 @@
+window.addEventListener("resize", resizeCanvas);
+window.addEventListener("orientationchange", () => {
+  setTimeout(resizeCanvas, 300);
+});
+
+
 // Функция отрисовки постоянного тумана (показывает, что участок уже был открыт)
 // Здесь мы можем, например, затемнять его слегка (например, прозрачный серый цвет),
 // чтобы скрыть ресурсы, но не затемнять полностью текущую динамику.
@@ -133,10 +139,7 @@ function resizeCanvas() {
   initFogOfWar(); // Инициализируем сетку тумана войны при изменении размеров
 }
 
-window.addEventListener("resize", resizeCanvas);
-window.addEventListener("orientationchange", () => {
-  setTimeout(resizeCanvas, 300);
-});
+
 
 
 resizeCanvas();
