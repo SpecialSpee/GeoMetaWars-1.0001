@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GeometryWars</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+	
+  <canvas id="gameCanvas"></canvas>
+
+  <!-- Загрузочный экран -->
+<div id="loadingScreen" style="
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background-color: #000;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  z-index: 10002;
+  color: #fff;
+">
+  <h1>
+	  ВНИМАНИЕ!!!
+	  Обнаружен зараженный участок космоса!
+
+</h1>
+  <button id="startButton" style="
+    padding: 10px 20px;
+    font-size: 20px;
+    cursor: pointer;
+  ">Исследовать...</button>
+</div>
+
+  <!-- UI: счетчики ресурсов -->
+  <div id="resourceCounters">
+    Игрок: Золото: <span id="playerGold">3000</span> | Кремний: <span id="playerSilicon">6000</span> | Плазма: <span id="playerPlasma">1000</span>
+    &nbsp;&nbsp;&nbsp;
+    ИИ: Золото: <span id="aiGold">3000</span> | Кремний: <span id="aiSilicon">6000</span> | Плазма: <span id="aiPlasma">100</span>
+  </div>
+
+  <canvas id="gameCanvas"></canvas>
+  
+  <script src="render.js"></script>
+	
+  <script src="constants.js"></script>
+
+  <script src="script.js"></script>
+	
+  <script src="inputs.js"></script>
+	
+  <script src="aiLogic.js"></script>
+
+</body>
+</html>

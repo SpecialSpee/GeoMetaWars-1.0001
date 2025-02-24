@@ -1,0 +1,1243 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Игровое поле с ресурсами, строительством и управлением юнитами</title>
+  <style>
+    /* Базовые стили и сброс отступов */
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+      background-color: #111;
+      font-family: sans-serif;
+      display: flex;
+      flex-direction: column;
+    }
+    /* Контейнер игры */
+    #gameContainer {
+      position: relative;
+      width: 100vw;
+      height: 100vh;
+      background-color: #000;
+      overflow: hidden;
+    }
+    /* Фоновый слой */
+    .background {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background-image: url('src/images/background.jpeg');
+      background-size: cover;
+      background-position: center;
+      z-index: 0;
+    }
+    /* Игровое поле – здесь располагаются здания, юниты, ресурсы и т.д. */
+    #gameField {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      transform-origin: top left;
+      transform: translate(0px, 0px) scale(1);
+      cursor: crosshair;
+      z-index: 1;
+    }
+    /* Стили для зданий */
+    .building { position: absolute; z-index: 10; }
+    .base {
+      width: 20px;
+      height: 20px;
+      background-color: rgba(0,128,255,0.7);
+      border: 1px solid #fff;
+      border-radius: 3px;
+    }
+    .ai-base {
+      width: 20px;
+      height: 20px;
+      background-color: rgba(255,128,0,0.7);
+      border: 2px solid #fff;
+      border-radius: 3px;
+      pointer-events: none;
+    }
+    .warehouse {
+      width: 10px;
+      height: 10px;
+      background-color: rgba(0,255,0,0.7);
+      border: 1px solid #fff;
+      border-radius: 2px;
+    }
+    .barracks {
+      width: 15px;
+      height: 15px;
+      background-color: rgba(128,0,128,0.7);
+      border: 1px solid #fff;
+      border-radius: 3px;
+    }
+    /* Ресурсы */
+    .resource {
+      position: absolute;
+      width: 10px;
+      height: 10px;
+      border-radius: 40%;
+      text-align: center;
+      font-size: 5px;
+      line-height: 5px;
+      color: #fff;
+      z-index: 5;
+    }
+    .gold { background-color: #ffd700; }
+    .silicon { background-color: #b0c4de; }
+    .plasma { background-color: #8a2be2; }
+    /* Юниты: рабочие и истребители */
+    .worker {
+      position: absolute;
+      width: 2px;
+      height: 2px;
+      border-radius: 50%;
+      background-color: #0f0;
+      z-index: 15;
+      transition: all 1s linear;
+    }
+    .fighter {
+      position: absolute;
+      width: 3px;
+      height: 3px;
+      border-radius: 50%;
+      background-color: red;
+      z-index: 15;
+      transition: all 0.5s linear;
+    }
+    /* Выделение юнита */
+    .selected { outline: 2px solid cyan; }
+    /* Меню строительства */
+    .buildMenu {
+      position: absolute;
+      background: rgba(50,50,50,0.9);
+      padding: 5px;
+      border: none;
+      border-radius: 5px;
+      z-index: 20;
+    }
+    .buildMenuItem {
+      padding: 4px 8px;
+      margin: 2px;
+      color: #fff;
+      cursor: crosshair;
+    }
+    /* Оверлей строительства */
+    .buildZone {
+      position: absolute;
+      border-radius: 50%;
+      background: rgba(0,0,0,0.3);
+      border: 1px dashed #fff;
+      z-index: 15;
+    }
+    /* Прямоугольник выделения */
+    #selectionRect {
+      position: absolute;
+      border: 1px dashed cyan;
+      background: rgba(0,255,255,0.2);
+      pointer-events: none;
+      z-index: 100;
+    }
+    /* Счётчики ресурсов */
+    #resourceCounters {
+      width: 100%;
+      background: #222;
+      color: #fff;
+      padding: 5px;
+      text-align: center;
+      font-size: 14px;
+    }
+    /* Всплывающие предупреждения */
+    .warning {
+      position: fixed;
+      top: 10px;
+      right: 600px;
+      background-color: rgba(255, 0, 0, 0.8);
+      color: #fff;
+      padding: 10px;
+      border-radius: 5px;
+      z-index: 1000;
+      font-size: 14px;
+    }
+    /* Стили для canvas с анимацией пуль */
+    #bulletCanvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      z-index: 200; /* поверх всего */
+      pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+  <!-- Основной контейнер игры -->
+  <div id="gameContainer">
+    <!-- Фоновый слой -->
+    <div class="background"></div>
+    <!-- Игровое поле -->
+    <div id="gameField">
+      <!-- База игрока -->
+      <div class="building base"></div>
+      <!-- База ИИ -->
+      <div class="building ai-base"></div>
+      <!-- Другие элементы игры будут добавляться динамически -->
+    </div>
+    <!-- Canvas для анимации пуль и взрывов -->
+    <canvas id="bulletCanvas"></canvas>
+  </div>
+  <!-- Счётчики ресурсов -->
+  <div id="resourceCounters">
+    Игрок: Золото: <span id="playerGold">300</span> | Кремний: <span id="playerSilicon">600</span> | Плазма: <span id="playerPlasma">100</span>
+    &nbsp;&nbsp;&nbsp;
+    ИИ: Золото: <span id="aiGold">300</span> | Кремний: <span id="aiSilicon">600</span> | Плазма: <span id="aiPlasma">100</span>
+  </div>
+  <script>
+    (function(){
+      // =============================
+      // Основные переменные и настройки
+      // =============================
+      const WORKER_COST = { gold: 20, silicon: 80, plasma: 8 };
+      const WAREHOUSE_COST = { gold: 60, silicon: 330, plasma: 25 };
+      const BARRACKS_COST = { gold: 100, silicon: 200, plasma: 50 };
+      const FIGHTER_COST = { gold: 50, silicon: 100, plasma: 20 };
+      const MARGIN = 5; // отступ для проверки наложения зданий
+
+      const playerResources = { gold: 3000, silicon: 6000, plasma: 1000 };
+      const aiResources = { gold: 3000, silicon: 6000, plasma: 100 };
+
+      function updateResourceCounters() {
+        document.getElementById("playerGold").innerText = playerResources.gold;
+        document.getElementById("playerSilicon").innerText = playerResources.silicon;
+        document.getElementById("playerPlasma").innerText = playerResources.plasma;
+        document.getElementById("aiGold").innerText = aiResources.gold;
+        document.getElementById("aiSilicon").innerText = aiResources.silicon;
+        document.getElementById("aiPlasma").innerText = aiResources.plasma;
+      }
+      updateResourceCounters();
+
+      const container = document.getElementById("gameContainer");
+      const field = document.getElementById("gameField");
+      const playerBase = field.querySelector(".base");
+      const aiBase = field.querySelector(".ai-base");
+      const cw = container.clientWidth;
+      const ch = container.clientHeight;
+
+      let scale = 1, translateX = 0, translateY = 0;
+      let isDragging = false, startX, startY;
+      let ignoreNextClick = false;
+      let rallyCommand = null;
+      let selectedWorkers = [];
+      let selectedFighters = [];
+      let currentZoneBase = null;
+
+      function clearSelection() {
+        selectedWorkers.forEach(u => u.classList.remove("selected"));
+        selectedFighters.forEach(u => u.classList.remove("selected"));
+        selectedWorkers = [];
+        selectedFighters = [];
+      }
+
+      function addUnitSelectionHandler(unit) {
+        unit.addEventListener("click", function(e) {
+          e.stopPropagation();
+          clearSelection();
+          unit.classList.add("selected");
+          if(unit.classList.contains("fighter")) {
+            selectedFighters.push(unit);
+          } else if(!unit.classList.contains("barracks")) {
+            selectedWorkers.push(unit);
+          }
+        });
+        unit.addEventListener("dblclick", function(e) {
+          e.stopPropagation();
+          clearSelection();
+          const owner = unit.dataset.owner;
+          const containerRect = container.getBoundingClientRect();
+          const allUnits = Array.from(field.querySelectorAll(".worker, .fighter, .barracks"))
+                            .filter(u => u.dataset.owner === owner);
+          allUnits.forEach(u => {
+            let uRect = u.getBoundingClientRect();
+            let cx = uRect.left + uRect.width/2;
+            let cy = uRect.top + uRect.height/2;
+            if(cx >= containerRect.left && cx <= containerRect.right &&
+               cy >= containerRect.top && cy <= containerRect.bottom) {
+              u.classList.add("selected");
+              if(u.classList.contains("fighter")) {
+                selectedFighters.push(u);
+              } else if(u.classList.contains("barracks")) {
+                // Для казарм двойной клик не устанавливает команду rally
+              } else {
+                selectedWorkers.push(u);
+              }
+            }
+          });
+        });
+      }
+
+      function updateTransform() {
+        const scaledWidth = cw * scale;
+        const scaledHeight = ch * scale;
+        if(scaledWidth <= cw) {
+          translateX = (cw - scaledWidth) / 2;
+        } else {
+          translateX = Math.min(0, Math.max(translateX, cw - scaledWidth));
+        }
+        if(scaledHeight <= ch) {
+          translateY = (ch - scaledHeight) / 2;
+        } else {
+          translateY = Math.min(0, Math.max(translateY, ch - scaledHeight));
+        }
+        field.style.transform = `translate(${translateX}px, ${translateY}px) scale(${scale})`;
+        updateZone();
+      }
+
+      function updateZone() {
+        const zone = document.getElementById("buildZone");
+        if(zone && currentZoneBase) {
+          const containerRect = container.getBoundingClientRect();
+          const baseRect = currentZoneBase.getBoundingClientRect();
+          const baseCenterX = baseRect.left - containerRect.left + baseRect.width/2;
+          const baseCenterY = baseRect.top - containerRect.top + baseRect.height/2;
+          const overlaySize = 100 * scale;
+          zone.style.width = overlaySize + "px";
+          zone.style.height = overlaySize + "px";
+          zone.style.left = (baseCenterX - overlaySize/2) + "px";
+          zone.style.top = (baseCenterY - overlaySize/2) + "px";
+        }
+      }
+
+      container.addEventListener("wheel", function(e) {
+        e.preventDefault();
+        const zoomFactor = 0.001;
+        const delta = -e.deltaY * zoomFactor;
+        let newScale = scale + delta;
+        newScale = Math.min(Math.max(newScale, 1), 3);
+        const containerRect = container.getBoundingClientRect();
+        const cx = e.clientX - containerRect.left;
+        const cy = e.clientY - containerRect.top;
+        translateX = cx - (cx - translateX) * (newScale/scale);
+        translateY = cy - (cy - translateY) * (newScale/scale);
+        scale = newScale;
+        updateTransform();
+      }, { passive: false, capture: true });
+
+      field.addEventListener("mousedown", function(e){
+        if(e.target.classList.contains("worker") || e.target.classList.contains("fighter")) return;
+        if(e.detail === 2) return;
+        isDragging = true;
+        startX = e.clientX; startY = e.clientY;
+        field.style.cursor = "crosshair";
+      });
+      document.addEventListener("mousemove", function(e){
+        if(isDragging) {
+          const dx = e.clientX - startX;
+          const dy = e.clientY - startY;
+          translateX += dx; translateY += dy;
+          startX = e.clientX; startY = e.clientY;
+          updateTransform();
+        }
+      });
+      document.addEventListener("mouseup", function(){
+        if(isDragging) {
+          isDragging = false;
+          field.style.cursor = "crosshair";
+        }
+      });
+
+      let lastTouchDistance = null, touchStartX = null, touchStartY = null;
+      let initialTranslateX = 0, initialTranslateY = 0;
+      field.addEventListener("touchstart", function(e){
+        if(e.touches.length === 1) {
+          touchStartX = e.touches[0].clientX;
+          touchStartY = e.touches[0].clientY;
+          initialTranslateX = translateX;
+          initialTranslateY = translateY;
+        } else if(e.touches.length === 2) {
+          lastTouchDistance = getDistance(e.touches[0], e.touches[1]);
+        }
+      });
+      field.addEventListener("touchmove", function(e){
+        e.preventDefault();
+        if(e.touches.length === 1) {
+          const dx = e.touches[0].clientX - touchStartX;
+          const dy = e.touches[0].clientY - touchStartY;
+          translateX = initialTranslateX + dx;
+          translateY = initialTranslateY + dy;
+          updateTransform();
+        } else if(e.touches.length === 2) {
+          const currentDistance = getDistance(e.touches[0], e.touches[1]);
+          if(lastTouchDistance) {
+            const ratio = currentDistance / lastTouchDistance;
+            let newScale = scale * ratio;
+            newScale = Math.min(Math.max(newScale, 1), 3);
+            scale = newScale;
+            updateTransform();
+          }
+          lastTouchDistance = currentDistance;
+        }
+      });
+      field.addEventListener("touchend", function(e){
+        if(e.touches.length < 2) {
+          lastTouchDistance = null;
+          touchStartX = null;
+          touchStartY = null;
+        }
+      });
+      function getDistance(t1, t2) {
+        const dx = t2.clientX - t1.clientX;
+        const dy = t2.clientY - t1.clientY;
+        return Math.sqrt(dx*dx+dy*dy);
+      }
+
+      playerBase.style.top = Math.random() * (ch - playerBase.offsetHeight) + "px";
+      playerBase.style.left = "60px";
+      aiBase.style.top = Math.random() * (ch - aiBase.offsetHeight) + "px";
+      aiBase.style.left = (cw - aiBase.offsetWidth - 60) + "px";
+
+      let isSelecting = false, selectionStart = null, selectionRect = null;
+      field.addEventListener("dblclick", function(e) {
+        if(e.target === field) {
+          isSelecting = true;
+          selectionStart = { x: e.clientX, y: e.clientY };
+          selectionRect = document.createElement("div");
+          selectionRect.id = "selectionRect";
+          selectionRect.style.position = "absolute";
+          selectionRect.style.border = "1px dashed cyan";
+          selectionRect.style.backgroundColor = "rgba(0,255,255,0.2)";
+          selectionRect.style.left = e.clientX + "px";
+          selectionRect.style.top = e.clientY + "px";
+          selectionRect.style.width = "0px";
+          selectionRect.style.height = "0px";
+          document.body.appendChild(selectionRect);
+        }
+      });
+      document.addEventListener("mousemove", function(e) {
+        if(isSelecting && selectionRect) {
+          const currentX = e.clientX, currentY = e.clientY;
+          const x = Math.min(currentX, selectionStart.x);
+          const y = Math.min(currentY, selectionStart.y);
+          const width = Math.abs(currentX - selectionStart.x);
+          const height = Math.abs(currentY - selectionStart.y);
+          selectionRect.style.left = x + "px";
+          selectionRect.style.top = y + "px";
+          selectionRect.style.width = width + "px";
+          selectionRect.style.height = height + "px";
+        }
+      });
+      document.addEventListener("mouseup", function(e) {
+        if(isSelecting && selectionRect) {
+          const rect = selectionRect.getBoundingClientRect();
+          clearSelection();
+          const allSelectable = field.querySelectorAll(".worker[data-owner='player'], .fighter[data-owner='player'], .barracks[data-owner='player']");
+          allSelectable.forEach(item => {
+            let itemRect = item.getBoundingClientRect();
+            let cx = itemRect.left + itemRect.width/2;
+            let cy = itemRect.top + itemRect.height/2;
+            if(cx >= rect.left && cx <= rect.right && cy >= rect.top && cy <= rect.bottom) {
+              item.classList.add("selected");
+              if(item.classList.contains("barracks")) {
+                rallyCommand = item;
+              } else if(item.classList.contains("fighter")) {
+                selectedFighters.push(item);
+              } else {
+                selectedWorkers.push(item);
+              }
+            }
+          });
+          selectionRect.remove();
+          selectionRect = null;
+          isSelecting = false;
+          selectionStart = null;
+          ignoreNextClick = true;
+          setTimeout(() => { ignoreNextClick = false; }, 300);
+        }
+      });
+
+      field.addEventListener("click", function(e) {
+        if(ignoreNextClick) return;
+        if(rallyCommand !== null) {
+          const fieldRect = field.getBoundingClientRect();
+          let x = (e.clientX - fieldRect.left) / scale;
+          let y = (e.clientY - fieldRect.top) / scale;
+          const fighters = field.querySelectorAll(`.fighter[data-owner='player'][data-parent-barracks='${rallyCommand.dataset.id}']`);
+          fighters.forEach(fighter => {
+            fighter.dataset.assignedCommand = JSON.stringify({ type: "rally", x: x, y: y });
+          });
+          rallyCommand = null;
+          return;
+        }
+        if(e.target.classList.contains("resource") || (e.target.parentElement && e.target.parentElement.classList.contains("resource"))) {
+          let res = e.target;
+          if(!res.classList.contains("resource"))
+            res = res.parentElement;
+          selectedWorkers.forEach(unit => {
+            unit.dataset.assignedTarget = res.dataset.resourceId;
+          });
+          selectedFighters.forEach(unit => {
+            unit.dataset.assignedCommand = JSON.stringify({ type: "protect", targetId: res.dataset.resourceId });
+          });
+          clearSelection();
+        } else {
+          selectedFighters.forEach(unit => {
+            const fieldRect = field.getBoundingClientRect();
+            let x = (e.clientX - fieldRect.left) / scale;
+            let y = (e.clientY - fieldRect.top) / scale;
+            unit.dataset.assignedCommand = JSON.stringify({ type: "move", x: x, y: y });
+          });
+          clearSelection();
+        }
+      });
+
+      // ================================
+      // Логика строительства и найма юнитов
+      // ================================
+      function showWarning(message) {
+        const warning = document.createElement("div");
+        warning.className = "warning";
+        warning.innerText = message;
+        document.body.appendChild(warning);
+        setTimeout(() => warning.remove(), 3000);
+      }
+
+      function showBuildingOverlay(buildingEl, owner, newBuildingType) {
+        const containerRect = container.getBoundingClientRect();
+        const buildingRect = buildingEl.getBoundingClientRect();
+        const centerX = buildingRect.left - containerRect.left + buildingRect.width / 2;
+        const centerY = buildingRect.top - containerRect.top + buildingRect.height / 2;
+        const overlaySize = 100 * scale;
+        const overlay = document.createElement("div");
+        overlay.id = "buildOverlay_" + newBuildingType;
+        overlay.className = "buildZone";
+        overlay.style.width = overlaySize + "px";
+        overlay.style.height = overlaySize + "px";
+        overlay.style.position = "absolute";
+        overlay.style.left = (centerX - overlaySize / 2) + "px";
+        overlay.style.top = (centerY - overlaySize / 2) + "px";
+        overlay.addEventListener("wheel", function(e) {
+          container.dispatchEvent(new WheelEvent("wheel", e));
+        });
+        overlay.addEventListener("click", function(e) {
+          const fieldRect = field.getBoundingClientRect();
+          let bx = (e.clientX - fieldRect.left) / scale;
+          let by = (e.clientY - fieldRect.top) / scale;
+          bx = Math.max(0, Math.min(bx, cw - (newBuildingType === "warehouse" ? 10 : 15)));
+          by = Math.max(0, Math.min(by, ch - (newBuildingType === "warehouse" ? 10 : 15)));
+          placeBuilding(bx, by, newBuildingType, owner);
+          overlay.remove();
+        });
+        container.appendChild(overlay);
+      }
+
+      function showBuildingMenu(buildingEl, owner) {
+        const existing = document.getElementById("buildMenu");
+        if(existing) existing.remove();
+        const menu = document.createElement("div");
+        menu.id = "buildMenu";
+        menu.className = "buildMenu";
+        const buildingRect = buildingEl.getBoundingClientRect();
+        menu.style.top = (buildingRect.bottom + 5) + "px";
+        menu.style.left = buildingRect.left + "px";
+        const items = [
+          { label: "Склад", type: "warehouse" },
+          { label: "Казарма", type: "barracks" }
+        ];
+        items.forEach(item => {
+          const it = document.createElement("div");
+          it.className = "buildMenuItem";
+          it.innerText = item.label;
+          it.addEventListener("click", function(ev) {
+            ev.stopPropagation();
+            showBuildingOverlay(buildingEl, owner, item.type);
+            menu.remove();
+          });
+          menu.appendChild(it);
+        });
+        document.body.appendChild(menu);
+      }
+
+      function addLongPressHandler(element, normalAction, menuAction, threshold = 500) {
+        let timer = null;
+        element.addEventListener("mousedown", function(e) {
+          timer = setTimeout(() => {
+            menuAction.call(element, e);
+            timer = null;
+          }, threshold);
+        });
+        element.addEventListener("mouseup", function(e) {
+          if (timer) {
+            clearTimeout(timer);
+            timer = null;
+            normalAction.call(element, e);
+          }
+        });
+        element.addEventListener("mouseleave", function() {
+          if (timer) {
+            clearTimeout(timer);
+            timer = null;
+          }
+        });
+      }
+
+      function warehouseAction(e) {
+        hireWorker(this, this.dataset.owner);
+      }
+      function barracksAction(e) {
+        hireFighter(this, this.dataset.owner);
+      }
+      function warehouseMenuAction(e) {
+        showBuildingMenu(this, this.dataset.owner);
+      }
+      function barracksMenuAction(e) {
+        showBuildingMenu(this, this.dataset.owner);
+      }
+
+      function placeBuilding(x, y, type, owner) {
+        let buildingWidth, buildingHeight;
+        if(type === "warehouse") {
+          buildingWidth = 10;
+          buildingHeight = 10;
+        } else if(type === "barracks") {
+          buildingWidth = 15;
+          buildingHeight = 15;
+        } else {
+          buildingWidth = 40;
+          buildingHeight = 40;
+        }
+        const newRect = { 
+          left: x - buildingWidth/2, 
+          top: y - buildingHeight/2, 
+          right: x + buildingWidth/2, 
+          bottom: y + buildingHeight/2 
+        };
+        const buildings = field.querySelectorAll(".building");
+        for(let b of buildings) {
+          const bRect = {
+            left: b.offsetLeft - MARGIN,
+            top: b.offsetTop - MARGIN,
+            right: b.offsetLeft + b.offsetWidth + MARGIN,
+            bottom: b.offsetTop + b.offsetHeight + MARGIN
+          };
+          if(rectsOverlap(newRect, bRect)) {
+            if(owner === "player") {
+              showWarning("Нельзя строить здания, накладывая их друг на друга");
+            }
+            return;
+          }
+        }
+        if(owner === "player") {
+          if(type === "warehouse") {
+            if(playerResources.gold < WAREHOUSE_COST.gold ||
+               playerResources.silicon < WAREHOUSE_COST.silicon ||
+               playerResources.plasma < WAREHOUSE_COST.plasma) {
+              showWarning("Недостаточно ресурсов для строительства склада");
+              return;
+            }
+            playerResources.gold -= WAREHOUSE_COST.gold;
+            playerResources.silicon -= WAREHOUSE_COST.silicon;
+            playerResources.plasma -= WAREHOUSE_COST.plasma;
+          } else if(type === "barracks") {
+            if(playerResources.gold < BARRACKS_COST.gold ||
+               playerResources.silicon < BARRACKS_COST.silicon ||
+               playerResources.plasma < BARRACKS_COST.plasma) {
+              showWarning("Недостаточно ресурсов для строительства казармы");
+              return;
+            }
+            playerResources.gold -= BARRACKS_COST.gold;
+            playerResources.silicon -= BARRACKS_COST.silicon;
+            playerResources.plasma -= BARRACKS_COST.plasma;
+          }
+        } else {
+          if(type === "warehouse") {
+            if(aiResources.gold < WAREHOUSE_COST.gold ||
+               aiResources.silicon < WAREHOUSE_COST.silicon ||
+               aiResources.plasma < WAREHOUSE_COST.plasma) {
+              return;
+            }
+            aiResources.gold -= WAREHOUSE_COST.gold;
+            aiResources.silicon -= WAREHOUSE_COST.silicon;
+            aiResources.plasma -= WAREHOUSE_COST.plasma;
+          } else if(type === "barracks") {
+            if(aiResources.gold < BARRACKS_COST.gold ||
+               aiResources.silicon < BARRACKS_COST.silicon ||
+               aiResources.plasma < BARRACKS_COST.plasma) {
+              return;
+            }
+            aiResources.gold -= BARRACKS_COST.gold;
+            aiResources.silicon -= BARRACKS_COST.silicon;
+            aiResources.plasma -= BARRACKS_COST.plasma;
+          }
+        }
+        updateResourceCounters();
+        const bld = document.createElement("div");
+        bld.classList.add("building");
+        if(type === "warehouse") {
+          bld.classList.add("warehouse");
+          bld.dataset.owner = owner;
+          bld.dataset.workers = "0";
+          bld.addEventListener("click", function(e) { e.stopPropagation(); });
+          addLongPressHandler(bld, warehouseAction, warehouseMenuAction);
+        } else if(type === "barracks") {
+          bld.classList.add("barracks");
+          bld.dataset.owner = owner;
+          bld.dataset.fighters = "0";
+          bld.addEventListener("click", function(e) { e.stopPropagation(); });
+          addLongPressHandler(bld, barracksAction, barracksMenuAction);
+          bld.dataset.id = "barracks_" + Date.now() + "_" + Math.floor(Math.random() * 1000);
+        }
+        bld.style.left = (x - buildingWidth/2) + "px";
+        bld.style.top = (y - buildingHeight/2) + "px";
+        field.appendChild(bld);
+      }
+
+      function rectsOverlap(r1, r2) {
+        return !(r1.right <= r2.left || r1.left >= r2.right || r1.bottom <= r2.top || r1.top >= r2.bottom);
+      }
+
+      function hireWorker(building, owner) {
+        let count = parseInt(building.dataset.workers || "0");
+        if(count >= 5) {
+          if(owner === "player") showWarning("Максимум рабочих для этого склада достигнут");
+          return;
+        }
+        if(owner === "player") {
+          if(playerResources.gold < WORKER_COST.gold ||
+             playerResources.silicon < WORKER_COST.silicon ||
+             playerResources.plasma < WORKER_COST.plasma) {
+            showWarning("Недостаточно ресурсов для найма рабочего");
+            return;
+          }
+          playerResources.gold -= WORKER_COST.gold;
+          playerResources.silicon -= WORKER_COST.silicon;
+          playerResources.plasma -= WORKER_COST.plasma;
+          updateResourceCounters();
+        } else {
+          if(aiResources.gold < WORKER_COST.gold ||
+             aiResources.silicon < WORKER_COST.silicon ||
+             aiResources.plasma < WORKER_COST.plasma) {
+            return;
+          }
+          aiResources.gold -= WORKER_COST.gold;
+          aiResources.silicon -= WORKER_COST.silicon;
+          aiResources.plasma -= WORKER_COST.plasma;
+          updateResourceCounters();
+        }
+        building.dataset.workers = (count + 1).toString();
+        const worker = document.createElement("div");
+        worker.className = "worker";
+        worker.dataset.owner = owner;
+        addUnitSelectionHandler(worker);
+        let bLeft = parseFloat(building.style.left) || 0;
+        let bTop = parseFloat(building.style.top) || 0;
+        const wx = bLeft + building.offsetWidth/2;
+        const wy = bTop + building.offsetHeight/2;
+        worker.style.left = wx + "px";
+        worker.style.top = wy + "px";
+        field.appendChild(worker);
+        startWorkerCycle(worker, building, owner);
+      }
+
+      function hireFighter(building, owner) {
+        let count = parseInt(building.dataset.fighters || "0");
+        if(count >= 5) {
+          if(owner === "player") showWarning("Максимум истребителей для этой казармы достигнут");
+          return;
+        }
+        if(owner === "player") {
+          if(playerResources.gold < FIGHTER_COST.gold ||
+             playerResources.silicon < FIGHTER_COST.silicon ||
+             playerResources.plasma < FIGHTER_COST.plasma) {
+            showWarning("Недостаточно ресурсов для найма истребителя");
+            return;
+          }
+          playerResources.gold -= FIGHTER_COST.gold;
+          playerResources.silicon -= FIGHTER_COST.silicon;
+          playerResources.plasma -= FIGHTER_COST.plasma;
+          updateResourceCounters();
+        } else {
+          if(aiResources.gold < FIGHTER_COST.gold ||
+             aiResources.silicon < FIGHTER_COST.silicon ||
+             aiResources.plasma < FIGHTER_COST.plasma) {
+            return;
+          }
+          aiResources.gold -= FIGHTER_COST.gold;
+          aiResources.silicon -= FIGHTER_COST.silicon;
+          aiResources.plasma -= FIGHTER_COST.plasma;
+          updateResourceCounters();
+        }
+        building.dataset.fighters = (count + 1).toString();
+        const fighter = document.createElement("div");
+        fighter.className = "fighter";
+        fighter.dataset.owner = owner;
+        fighter.dataset.parentBarracks = building.dataset.id;
+        addUnitSelectionHandler(fighter);
+        let bLeft = parseFloat(building.style.left) || 0;
+        let bTop = parseFloat(building.style.top) || 0;
+        const offset = 5;
+        const angle = Math.random() * 2 * Math.PI;
+        const fx = bLeft + building.offsetWidth/2 + Math.cos(angle) * offset;
+        const fy = bTop + building.offsetHeight/2 + Math.sin(angle) * offset;
+        fighter.style.left = fx + "px";
+        fighter.style.top = fy + "px";
+        field.appendChild(fighter);
+        startFighterCycle(fighter, building, owner);
+      }
+
+      function getLogicalPosition(element) {
+  		const rect = element.getBoundingClientRect();
+  		return { x: rect.left, y: rect.top };
+	  }
+	  function getWorkerPosition(unit) {
+  		const rect = unit.getBoundingClientRect();
+  		return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+	  }
+
+      function getPreferredResourceType(owner) {
+        let res = (owner === "player") ? playerResources : aiResources;
+        let min = Math.min(res.gold, res.silicon, res.plasma);
+        if(min === res.gold) return "gold";
+        else if(min === res.silicon) return "silicon";
+        else return "plasma";
+      }
+
+      function findNearestResource(x, y, preferredType) {
+        let resources = Array.from(field.querySelectorAll(".resource")).filter(res => parseFloat(res.dataset.amount) > 0);
+        let filtered = resources.filter(res => res.classList.contains(preferredType));
+        if(filtered.length > 0) resources = filtered;
+        let minDist = Infinity, nearest = null;
+        resources.forEach(res => {
+          let pos = getLogicalPosition(res);
+          const rx = pos.x + res.offsetWidth/2;
+          const ry = pos.y + res.offsetHeight/2;
+          let d = Math.hypot(rx - x, ry - y);
+          if(d < minDist) { minDist = d; nearest = res; }
+        });
+        return nearest;
+      }
+
+      function startWorkerCycle(worker, building, owner) {
+        if (!document.body.contains(worker)) return;
+        const pos = getWorkerPosition(worker);
+        let target = null;
+        if(worker.dataset.assignedTarget) {
+          target = field.querySelector(`.resource[data-resource-id="${worker.dataset.assignedTarget}"]`);
+          if(!target || parseFloat(target.dataset.amount) <= 0) {
+            target = null;
+            delete worker.dataset.assignedTarget;
+          }
+        }
+        if(!target) {
+          const prefType = getPreferredResourceType(owner);
+          target = findNearestResource(pos.x, pos.y, prefType);
+        }
+        if(!target) {
+          setTimeout(() => { startWorkerCycle(worker, building, owner); }, 1000);
+          return;
+        }
+        moveWorker(worker, target, function(){
+          setTimeout(() => {
+            let cur = parseFloat(target.dataset.amount);
+            if(cur > 0) {
+              target.dataset.amount = cur - 1;
+              const sp = target.querySelector("span");
+              if(sp) sp.innerText = target.dataset.amount;
+              const resType = target.classList.contains("gold") ? "gold" :
+                              target.classList.contains("silicon") ? "silicon" :
+                              target.classList.contains("plasma") ? "plasma" : "";
+              if(owner === "player") {
+                playerResources[resType] += 1;
+              } else {
+                aiResources[resType] += 1;
+              }
+              updateResourceCounters();
+            }
+            moveWorker(worker, building, function(){
+              setTimeout(() => { startWorkerCycle(worker, building, owner); }, 1000);
+            });
+          }, 1000);
+        });
+      }
+
+      const WORKER_SPEED = 100;
+      // Новая функция moveWorker (использует requestAnimationFrame для анимации)
+function moveWorker(unit, target, callback) {
+  // Получаем начальную позицию юнита
+  const startPos = getWorkerPosition(unit);
+  let targetPos;
+  if (target.classList && (target.classList.contains("resource") ||
+      target.classList.contains("building") || target.classList.contains("warehouse") || target.classList.contains("barracks"))) {
+    const tPos = getLogicalPosition(target);
+    targetPos = { x: tPos.x + target.offsetWidth / 2, y: tPos.y + target.offsetHeight / 2 };
+  } else if (target.style) {
+    targetPos = { x: parseFloat(target.style.left) + target.offsetWidth / 2, y: parseFloat(target.style.top) + target.offsetHeight / 2 };
+  }
+  const dx = targetPos.x - startPos.x;
+  const dy = targetPos.y - startPos.y;
+  const distance = Math.hypot(dx, dy);
+  // Продолжительность анимации в миллисекундах (WORKER_SPEED – глобальная константа)
+  const duration = distance / WORKER_SPEED * 1000;
+  const startTime = performance.now();
+  
+  function animate() {
+    const currentTime = performance.now();
+    const elapsed = currentTime - startTime;
+    const progress = Math.min(elapsed / duration, 1); // от 0 до 1
+    const newX = startPos.x + dx * progress;
+    const newY = startPos.y + dy * progress;
+    // Обновляем позицию юнита (обновляем style.left и style.top)
+    unit.style.left = (newX - unit.offsetWidth / 2) + "px";
+    unit.style.top = (newY - unit.offsetHeight / 2) + "px";
+    if (progress < 1) {
+      requestAnimationFrame(animate);
+    } else {
+      callback();
+    }
+  }
+  requestAnimationFrame(animate);
+}
+
+
+      // Модифицированный цикл истребителя – всегда ищет врагов и стреляет даже во время движения
+      function startFighterCycle(fighter, building, owner) {
+        const pos = getWorkerPosition(fighter);
+        // Поиск ближайшей вражеской цели
+        const enemyUnits = Array.from(field.querySelectorAll(".building, .worker, .fighter"))
+                              .filter(u => u.dataset.owner && u.dataset.owner !== owner);
+        let nearest = null, minDist = Infinity;
+        enemyUnits.forEach(u => {
+          const uPos = getWorkerPosition(u);
+          const d = Math.hypot(uPos.x - pos.x, uPos.y - pos.y);
+          if(d < minDist && d <= 150) {
+            minDist = d;
+            nearest = u;
+          }
+        });
+        if(nearest) {
+          // Выстрел происходит независимо от выполняемой команды
+          fireBullet(fighter, nearest);
+        }
+        // Выполнение команд движения/защиты, если они заданы
+        if(fighter.dataset.assignedCommand) {
+          const command = JSON.parse(fighter.dataset.assignedCommand);
+          if(command.type === "rally") {
+            let dummy = { style: { left: command.x + "px", top: command.y + "px" }, offsetWidth: 1, offsetHeight: 1 };
+            moveWorker(fighter, dummy, function(){
+              delete fighter.dataset.assignedCommand;
+              setTimeout(() => startFighterCycle(fighter, building, owner), 100);
+            });
+            return;
+          } else if(command.type === "move") {
+            let dummy = { style: { left: command.x + "px", top: command.y + "px" }, offsetWidth: 1, offsetHeight: 1 };
+            moveWorker(fighter, dummy, function(){
+              delete fighter.dataset.assignedCommand;
+              setTimeout(() => startFighterCycle(fighter, building, owner), 100);
+            });
+            return;
+          } else if(command.type === "protect") {
+            const target = field.querySelector(`.resource[data-resource-id="${command.targetId}"]`);
+            if(target) {
+              const targetRect = target.getBoundingClientRect();
+              const targetCenterX = targetRect.left + targetRect.width/2;
+              const targetCenterY = targetRect.top + targetRect.height/2;
+              const radius = 20;
+              const angle = Math.random() * Math.PI * 2;
+              const destX = ((targetCenterX - field.getBoundingClientRect().left) / scale) + radius * Math.cos(angle);
+              const destY = ((targetCenterY - field.getBoundingClientRect().top) / scale) + radius * Math.sin(angle);
+              let dummy = { style: { left: destX + "px", top: destY + "px" }, offsetWidth: 1, offsetHeight: 1 };
+              moveWorker(fighter, dummy, function(){
+                delete fighter.dataset.assignedCommand;
+                setTimeout(() => startFighterCycle(fighter, building, owner), 100);
+              });
+              return;
+            } else {
+              delete fighter.dataset.assignedCommand;
+            }
+          }
+        }
+        setTimeout(() => startFighterCycle(fighter, building, owner), 100);
+      }
+
+      // ================================
+      // Интеграция механики стрельбы через canvas
+      // ================================
+      const bulletCanvas = document.getElementById("bulletCanvas");
+      const bulletCtx = bulletCanvas.getContext("2d");
+      function resizeBulletCanvas() {
+        bulletCanvas.width = container.clientWidth;
+        bulletCanvas.height = container.clientHeight;
+      }
+      window.addEventListener("resize", resizeBulletCanvas);
+      resizeBulletCanvas();
+
+      let bullets = [];
+      let explosions = [];
+
+      // Функция создания пули через canvas
+      function fireBullet(fighter, enemy) {
+        const fighterPos = getWorkerPosition(fighter);
+        const enemyPos = getWorkerPosition(enemy);
+        const angle = Math.atan2(enemyPos.y - fighterPos.y, enemyPos.x - fighterPos.x);
+        const speed = 300; // скорость пули (пикселей/сек)
+        const bullet = {
+          x: fighterPos.x,
+          y: fighterPos.y,
+          angle: angle,
+          speed: speed,
+          alive: true,
+          target: enemy,
+          trail: []
+        };
+        bullets.push(bullet);
+        // Кратковременная вспышка (muzzle flash)
+        createExplosion(fighterPos.x, fighterPos.y, 10, 20, 0.8);
+      }
+
+      // Функция создания взрыва
+      function createExplosion(x, y, startRadius, maxRadius, startAlpha) {
+        const explosion = {
+          x: x,
+          y: y,
+          radius: startRadius,
+          maxRadius: maxRadius,
+          alpha: startAlpha,
+          life: 0
+        };
+        explosions.push(explosion);
+      }
+
+      function updateBullets(deltaTime) {
+        bullets.forEach(bullet => {
+          bullet.trail.push({ x: bullet.x, y: bullet.y });
+          if(bullet.trail.length > 10) bullet.trail.shift();
+          bullet.x += Math.cos(bullet.angle) * bullet.speed * deltaTime;
+          bullet.y += Math.sin(bullet.angle) * bullet.speed * deltaTime;
+          if(bullet.target && document.body.contains(bullet.target)) {
+            const targetPos = getWorkerPosition(bullet.target);
+            const dist = Math.hypot(bullet.x - targetPos.x, bullet.y - targetPos.y);
+            if(dist < 5) {
+              bullet.alive = false;
+              bullet.target.remove();
+              createExplosion(bullet.x, bullet.y, 5, 30, 1.0);
+            }
+          }
+          if (bullet.x < 0 || bullet.x > bulletCanvas.width || bullet.y < 0 || bullet.y > bulletCanvas.height) {
+            bullet.alive = false;
+            createExplosion(bullet.x, bullet.y, 5, 30, 1.0);
+          }
+        });
+        bullets = bullets.filter(b => b.alive);
+      }
+
+      function updateExplosions(deltaTime) {
+        explosions.forEach(exp => {
+          exp.life += deltaTime;
+          exp.radius += (exp.maxRadius - exp.radius) * deltaTime * 2;
+          exp.alpha -= deltaTime;
+          if(exp.alpha < 0) exp.alpha = 0;
+        });
+        explosions = explosions.filter(exp => exp.alpha > 0);
+      }
+
+      function drawBullets() {
+        bulletCtx.clearRect(0, 0, bulletCanvas.width, bulletCanvas.height);
+        bullets.forEach(bullet => {
+          for(let i = 0; i < bullet.trail.length; i++){
+            const point = bullet.trail[i];
+            const trailAlpha = ((i + 1) / bullet.trail.length) * 0.5;
+            bulletCtx.fillStyle = `rgba(255,255,0,${trailAlpha})`;
+            bulletCtx.beginPath();
+            bulletCtx.arc(point.x, point.y, 2, 0, Math.PI*2);
+            bulletCtx.fill();
+          }
+          bulletCtx.fillStyle = "yellow";
+          bulletCtx.beginPath();
+          bulletCtx.arc(bullet.x, bullet.y, 3, 0, Math.PI*2);
+          bulletCtx.fill();
+        });
+      }
+
+      function drawExplosions() {
+        explosions.forEach(exp => {
+          const grad = bulletCtx.createRadialGradient(exp.x, exp.y, exp.radius*0.2, exp.x, exp.y, exp.radius);
+          grad.addColorStop(0, `rgba(255,150,0,${exp.alpha})`);
+          grad.addColorStop(1, "rgba(255,0,0,0)");
+          bulletCtx.fillStyle = grad;
+          bulletCtx.beginPath();
+          bulletCtx.arc(exp.x, exp.y, exp.radius, 0, Math.PI*2);
+          bulletCtx.fill();
+        });
+      }
+
+      function drawBulletScene() {
+        bulletCtx.clearRect(0, 0, bulletCanvas.width, bulletCanvas.height);
+        drawBullets();
+        drawExplosions();
+      }
+
+      let lastBulletTime = performance.now();
+      function bulletLoop(time) {
+        const deltaTime = (time - lastBulletTime) / 1000;
+        lastBulletTime = time;
+        updateBullets(deltaTime);
+        updateExplosions(deltaTime);
+        drawBulletScene();
+        requestAnimationFrame(bulletLoop);
+      }
+      requestAnimationFrame(bulletLoop);
+
+      // Генерация ресурсов
+      function generateResource(type, count, maxAmount) {
+        for(let i = 0; i < count; i++){
+          const res = document.createElement("div");
+          res.classList.add("resource", type);
+          res.dataset.resourceId = type + "_" + i;
+          const rx = Math.random() * (cw - 16);
+          const ry = Math.random() * (ch - 16);
+          res.style.left = rx + "px";
+          res.style.top = ry + "px";
+          res.dataset.amount = maxAmount;
+          res.dataset.max = maxAmount;
+          res.innerHTML = `<span>${maxAmount}</span>`;
+          field.appendChild(res);
+        }
+      }
+      generateResource("gold", 20, 300);
+      generateResource("silicon", 40, 600);
+      generateResource("plasma", 15, 100);
+      setInterval(() => {
+        field.querySelectorAll(".resource").forEach(res => {
+          let cur = parseFloat(res.dataset.amount);
+          let max = parseFloat(res.dataset.max);
+          if(cur < max){
+            cur = Math.min(cur + 1, max);
+            res.dataset.amount = cur;
+            const sp = res.querySelector("span");
+            if(sp) sp.innerText = cur;
+          }
+        });
+      }, 10000);
+
+      // Логика ИИ: авто-строительство склада и найм рабочих
+      function autoBuildWarehouseForAI() {
+        const aiWarehouses = field.querySelectorAll(".warehouse[data-owner='ai']");
+        if(aiWarehouses.length === 0) {
+          if(aiResources.gold >= WAREHOUSE_COST.gold &&
+             aiResources.silicon >= WAREHOUSE_COST.silicon &&
+             aiResources.plasma >= WAREHOUSE_COST.plasma) {
+            const baseX = aiBase.offsetLeft + aiBase.offsetWidth / 2;
+            const baseY = aiBase.offsetTop + aiBase.offsetHeight / 2;
+            const minRadius = 40, maxRadius = 100;
+            const r = minRadius + Math.random() * (maxRadius - minRadius);
+            const angle = Math.random() * Math.PI * 2;
+            let bx = baseX + r * Math.cos(angle);
+            let by = baseY + r * Math.sin(angle);
+            bx = Math.max(0, Math.min(bx, cw - 30));
+            by = Math.max(0, Math.min(by, ch - 30));
+            placeBuilding(bx, by, "warehouse", "ai");
+          }
+        }
+      }
+      function autoHireWorkerForAI() {
+        const warehouses = field.querySelectorAll(".warehouse[data-owner='ai']");
+        warehouses.forEach(wh => {
+          let cnt = parseInt(wh.dataset.workers || "0");
+          if(cnt < 5) {
+            if(aiResources.gold >= WORKER_COST.gold &&
+               aiResources.silicon >= WORKER_COST.silicon &&
+               aiResources.plasma >= WORKER_COST.plasma) {
+              hireWorker(wh, "ai");
+            }
+          }
+        });
+      }
+      setInterval(autoBuildWarehouseForAI, 5000);
+      setInterval(autoHireWorkerForAI, 5000);
+
+      // Построение для базы игрока через меню и оверлей
+      playerBase.addEventListener("click", function(e) {
+        e.stopPropagation();
+        const existing = document.getElementById("buildMenu");
+        if(existing) existing.remove();
+        const menu = document.createElement("div");
+        menu.id = "buildMenu";
+        menu.className = "buildMenu";
+        const baseRect = playerBase.getBoundingClientRect();
+        menu.style.top = (baseRect.bottom + 5) + "px";
+        menu.style.left = baseRect.left + "px";
+        const items = [
+          { label: "Склад", type: "warehouse" },
+          { label: "Казарма", type: "barracks" }
+        ];
+        items.forEach(item => {
+          const it = document.createElement("div");
+          it.className = "buildMenuItem";
+          it.innerText = item.label;
+          it.addEventListener("click", function(ev) {
+            ev.stopPropagation();
+            showBuildZone(playerBase, "player", item.type);
+            menu.remove();
+          });
+          menu.appendChild(it);
+        });
+        document.body.appendChild(menu);
+      });
+      function showBuildZone(baseEl, owner, buildingType) {
+        currentZoneBase = baseEl;
+        const ex = document.getElementById("buildZone");
+        if(ex) ex.remove();
+        const zone = document.createElement("div");
+        zone.id = "buildZone";
+        zone.className = "buildZone";
+        const containerRect = container.getBoundingClientRect();
+        const baseRect = baseEl.getBoundingClientRect();
+        const baseCenterX = baseRect.left - containerRect.left + baseRect.width/2;
+        const baseCenterY = baseRect.top - containerRect.top + baseRect.height/2;
+        const overlaySize = 100 * scale;
+        zone.style.width = overlaySize + "px";
+        zone.style.height = overlaySize + "px";
+        zone.style.position = "absolute";
+        zone.style.left = (baseCenterX - overlaySize/2) + "px";
+        zone.style.top = (baseCenterY - overlaySize/2) + "px";
+        container.appendChild(zone);
+        zone.addEventListener("wheel", function(e) {
+          container.dispatchEvent(new WheelEvent("wheel", e));
+        });
+        window.addEventListener("resize", function onResize() {
+          if(container.contains(zone)) {
+            const baseRect = baseEl.getBoundingClientRect();
+            const containerRect = container.getBoundingClientRect();
+            const baseCenterX = baseRect.left - containerRect.left + baseRect.width/2;
+            const baseCenterY = baseRect.top - containerRect.top + baseRect.height/2;
+            const newSize = 100 * scale;
+            zone.style.width = newSize + "px";
+            zone.style.height = newSize + "px";
+            zone.style.left = (baseCenterX - newSize/2) + "px";
+            zone.style.top = (baseCenterY - newSize/2) + "px";
+          } else {
+            window.removeEventListener("resize", onResize);
+          }
+        });
+        zone.addEventListener("click", function(e) {
+          const fieldRect = field.getBoundingClientRect();
+          let bx = (e.clientX - fieldRect.left) / scale;
+          let by = (e.clientY - fieldRect.top) / scale;
+          bx = Math.max(0, Math.min(bx, cw - (buildingType === "warehouse" ? 10 : 15)));
+          by = Math.max(0, Math.min(by, ch - (buildingType === "warehouse" ? 10 : 15)));
+          placeBuilding(bx, by, buildingType, owner);
+          zone.remove();
+        });
+      }
+      // ================================
+      // Конец логики строительства
+      // ================================
+    })();
+  </script>
+</body>
+</html>

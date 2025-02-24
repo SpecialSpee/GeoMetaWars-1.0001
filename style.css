@@ -1,0 +1,65 @@
+html, body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  background: [];
+  overflow: hidden;
+  font-family: sans-serif;
+}
+
+.tooltip {
+  position: absolute;
+  background: rgba(0, 0, 0, 0.8);
+  color: #fff;
+  padding: 5px 10px;
+  border-radius: 4px;
+  pointer-events: none; /* чтобы подсказка не мешала кликам */
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+/* UI-оверлей для счетчиков ресурсов */
+
+#gameCanvas {
+  cursor: crosshair;
+}
+
+#resourceCounters {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  background: #222;
+  color: #fff;
+  padding: 5px;
+  text-align: center;
+  font-size: 14px;
+  z-index: 10;
+}
+
+/* Стиль меню строительства */
+#buildMenu {
+  position: fixed;
+  background: rgba(50,50,50,0.9);
+  padding: 5px;
+  border-radius: 5px;
+  z-index: 20;
+}
+#buildMenu div {
+  padding: 4px 8px;
+  margin: 2px;
+  color: #fff;
+  cursor:wait;
+}
+
+/* Стиль оверлея строительства */
+#buildZone {
+  position: fixed;
+  border-radius: 50%;
+  background: rgba(0,0,0,0.3);
+  border: 1px dashed #fff;
+  z-index: 15;	
+}
+
+
