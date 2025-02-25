@@ -1,6 +1,177 @@
+let gameLoopId;
+let isPaused = false;
+// Объявляем переменные виртуального мира заранее
+let worldWidth, worldHeight;
+const ctx = canvas.getContext("2d");
+
+// Объект камеры и функции преобразования координат
+const camera = {
+  offsetX: 0,
+  offsetY: 0,
+  scale: 0.5  // Начальный масштаб – можно регулировать
+};
+
+
+
+// Классы игровых объектов
+class Building {
+  constructor(type, owner, x, y) {
+    this.type = type;
+    this.owner = owner;
+    this.x = x;
+    this.y = y;
+    if (type === "warehouse") {
+      this.width = 10; this.height = 10;
+      this.workers = 0; this.health = 250; this.maxHealth = 250;
+    } else if (type === "barracks") {
+      this.width = 15; this.height = 15;
+      this.fighters = 0; this.health = 400; this.maxHealth = 400;
+    } else if (type === "barracks2") {
+      this.width = 25; this.height = 15;
+      // Для казармы2 будем использовать её для найма штурмовиков
+      this.fighters = 0; this.health = 550; this.maxHealth = 550;
+    } else if (type === "base") {
+      this.width = 20; this.height = 20;
+      this.health = 1000; this.maxHealth = 1000;
+    } else if (type === "base2") {
+      this.width = 25; this.height = 30;
+      this.health = 1200; this.maxHealth = 1200;
+    } else if (type === "turret") {
+      this.width = 12; this.height = 12;
+      this.health = 250; this.maxHealth = 250;
+      this.range = 250; this.fireRate = 150;
+      this.lastFireTime = 0; this.angle = 0;
+      this.target = null;
+    } else if (type === "turret2") {
+      this.width = 15; this.height = 17;
+      this.health = 350; this.maxHealth = 350;
+      this.range = 500; this.fireRate = 3000;
+      this.lastFireTime = 0; this.angle = 0;
+      this.target = null;
+    } else if (type === "beacon") {
+      this.width = 4; this.height = 17;
+      this.health = 250; this.maxHealth = 250;
+      this.buildZoneMultiplier = 2;
+    } else if (type === "repairWorkshop") {
+      this.width = 10; this.height = 10;
+      this.health = 300; this.maxHealth = 300;
+      this.capacity = 5;
+      this.repairman = 0;
+      this.controlRadius = 200;
+    }
+    // Новые типы зданий:
+    else if (type === "base3") {
+      this.width = 30; this.height = 30;
+      this.health = 1500; this.maxHealth = 1500;
+    } else if (type === "barracks3") {
+      this.width = 20; this.height = 15;
+      this.fighters = 0; this.health = 80; this.maxHealth = 80;
+    } else if (type === "wall") {
+      this.width = 40; this.height = 10;
+      this.health = 200; this.maxHealth = 200;
+    }
+  }
+}
+class Unit {
+  constructor(type, owner, x, y) {
+    this.type = type;
+    this.owner = owner;
+    this.x = x; this.y = y;
+    this.target = null;
+    this.commandQueue = [];
+    this.idleTimer = 0;
+    this.currentMovementAnimation = null;
+    this.angle = 0;
+    this.scale = 1;
+    this.hidden = false;
+    this.hiding = false;
+    this.inWorkshop = null;
+    this.maneuvering = false;
+    if (type === "worker") {
+      this.health = 50;
+      this.maxHealth = 50;
+    } else if (type === "fighter") {
+      this.health = 100;
+      this.maxHealth = 100;
+      this.range = 150;
+      this.fireRate = 100;
+      this.lastFireTime = 0;
+      this.orbitRadius = undefined;
+      this.orbitAngle = undefined;
+      this.engagementRadius = 500;
+    } else if (type === "repairman") {
+      this.health = 50;
+      this.maxHealth = 50;
+      this.engagementRadius = 500;
+      this.scale = 0.4;
+    }
+    else if (type === "assault") {
+  this.health = 200;
+  this.maxHealth = 200;
+  // Пулемётный режим:
+  this.machineGunRange = 100;          // Радиус действия пулемёта
+  this.machineGunFireRate = 200;         // Интервал стрельбы пулемётом (мс)
+  this.lastMachineGunFireTime = 0;
+  // Ракетный режим (аналог турели2):
+  this.rocketRange = 300;               // Радиус для ракетного выстрела
+  this.rocketCooldown = 3000;           // Кулдаун ракетного выстрела (мс)
+  this.lastRocketFireTime = performance.now();
+  this.engagementRadius = 500;
+  this.range = 300; // <-- Добавляем общее свойство range для определения дистанции атаки
+}
+
+    // Новый тип: элитный (лингкор)
+    else if (type === "elite") {
+      this.health = 350;
+      this.maxHealth = 350;
+      this.range = 300;
+      this.meleeRange = 100;   // Если враг ближе 100 единиц – использовать шрапнель
+      this.artilleryRange = 500;  // Если враг между 100 и 150 – использовать ракетный залп
+      this.laserRange = 300;   // Если враг дальше 150 – использовать лазерный выстрел
+      
+      this.lastMeleeAttack = 0;
+      this.lastArtilleryAttack = 0;
+      this.lastLaserAttack = 0;
+      this.meleeCooldown = 500;
+      this.artilleryCooldown = 3000;
+      this.laserCooldown = 8000;
+    }
+
+  }
+}
+class Resource {
+  constructor(type, x, y, amount, max) {
+    this.type = type;
+    this.x = x;
+    this.y = y;
+    this.amount = amount;
+    this.max = max;
+    this.depleted = false;
+    if (this.type === "gold") {
+      const shape = createGoldShape();
+      this.points = shape.points;
+      this.baseRadius = shape.baseRadius;
+      this.rotation = 0;
+      this.rotationSpeed = 0.2;
+    }
+  }
+}
+class Bullet {
+  constructor(x, y, angle, speed, shooter, target) {
+    this.x = x; this.y = y;
+    this.angle = angle; this.speed = speed;
+    this.shooter = shooter; this.target = target;
+    this.alive = true; this.damage = 10; this.lifetime = 1.5;
+    // Свойство color будет задаваться при создании, если нужно
+  }
+}
+
+
 // ======================
 // === Оригинальные константы и функции (оставляем без изменений)
 // ======================
+
+
 
 const DESIRED_WAREHOUSE_COUNT = 150;
 const DESIRED_WORKER_COUNT = 5;
@@ -94,295 +265,222 @@ const gameState = {
 };
 let selectedUnits = [];
 
+const margin = 100;
+const MAX_SCALE = 2;
 
-function calculateWallPosition(base) {
-  // Выбираем случайный угол для размещения стены вокруг базы.
-  const angle = Math.random() * 2 * Math.PI;
-  // Определяем отступ: половина ширины базы плюс фиксированный отступ (например, 20 пикселей)
-  const offset = base.width / 2 + 20;
-  return {
-    x: base.x + offset * Math.cos(angle),
-    y: base.y + offset * Math.sin(angle)
-  };
-}
-
-
-function randomFarPosition(building, minDistance) {
-  // minDistance – минимальное расстояние от здания
-  const angle = Math.random() * Math.PI * 3;
-  // Можно задать, что случайное расстояние будет в диапазоне от minDistance до, например, 2*minDistance
-  const distance = minDistance + Math.random() * minDistance;
-  return { 
-    x: building.x + distance * Math.cos(angle), 
-    y: building.y + distance * Math.sin(angle) 
-  };
-}
-
-
-function countBuildings(buildingType, owner) {
-  return gameState.buildings.filter(b => b.owner === owner && b.type === buildingType).length;
-}
-
-function canAfford(cost, owner) {
-  if (owner === "ai") {
-    return gameState.aiResources.gold >= cost.gold &&
-           gameState.aiResources.silicon >= cost.silicon &&
-           gameState.aiResources.plasma >= cost.plasma;
-  } else if (owner === "player") {
-    return gameState.playerResources.gold >= cost.gold &&
-           gameState.playerResources.silicon >= cost.silicon &&
-           gameState.playerResources.plasma >= cost.plasma;
-  }
-  return false;
-}
-
-// Функция оценки плотности ресурсов в заданной области
-function evaluateResourceDensity(x, y, radius) {
-  let density = 0;
-  gameState.resources.forEach(resource => {
-    const d = Math.hypot(resource.x - x, resource.y - y);
-    if (d < radius) {
-      density += resource.amount; // можно добавить вес для разных типов ресурсов
-    }
-  });
-  return density;
-}
-
-function attemptToBuildWarehouse() {
-  if (countBuildings("warehouse", "ai") < DESIRED_WAREHOUSE_COUNT) {
-    const pos = findOptimalWarehousePosition();
-    if (pos && canAfford(WAREHOUSE_COST, "ai")) {
-      if (aiPlaceBuilding("warehouse", pos.x, pos.y)) {
-        console.log("AI построил склад в оптимальной позиции", pos);
-      }
-    }
-  }
-}
-
-function randomNearbyPosition(building, distance) {
-  const angle = Math.random() * Math.PI * 2;
-  return { x: building.x + distance * Math.cos(angle), y: building.y + distance * Math.sin(angle) };
-}
-
-function isPositionInBuildingZone(x, y) {
-  const zoneMargin = 20; // базовый отступ для зоны строительства
-  for (let b of gameState.buildings) {
-    // Для складов можно использовать меньший margin, если требуется
-    let currentMargin = zoneMargin;
-    if (b.type === "warehouse") {
-      currentMargin = 10;
-    }
-    const bRect = {
-      left: b.x - b.width / 2 - currentMargin,
-      top: b.y - b.height / 2 - currentMargin,
-      right: b.x + b.width / 2 + currentMargin,
-      bottom: b.y + b.height / 2 + currentMargin
-    };
-    if (x >= bRect.left && x <= bRect.right && y >= bRect.top && y <= bRect.bottom) {
-      return true;
-    }
-  }
-  return false;
-}
-
-function startRepairCycle(repairMan, workshop) {
-  console.log("Запущен цикл ремонта для ремонтника", repairMan, "из мастерской", workshop);
-  // Логика ремонта
-}
-
-function startRepairProcess(repairman, command) {
-  console.log("Запущен процесс ремонта для объекта", command.target, "ремонтником", repairman);
-  const repairRate = 5;
-  const intervalTime = 100;
-  const REPAIR_COST = { gold: 2, silicon: 5, plasma: 1 };
-  const intervalsPerSecond = 1000 / intervalTime;
-  const costGoldPerInterval = REPAIR_COST.gold / intervalsPerSecond;
-  const costSiliconPerInterval = REPAIR_COST.silicon / intervalsPerSecond;
-  const costPlasmaPerInterval = REPAIR_COST.plasma / intervalsPerSecond;
+// Массив с путями к фоновым изображениям
+const backgroundImages = [
+  'src/images/background1.jpeg',
+  'src/images/background2.jpeg',
+  'src/images/background3.jpeg',
+  'src/images/background4.jpeg',
+  'src/images/background5.jpeg',
+	'src/images/background6.jpeg',
+	'src/images/background7.jpeg'
+];
+// Выбор случайного изображения из массива
+const randomIndex = Math.floor(Math.random() * backgroundImages.length);
+const selectedImage = backgroundImages[randomIndex];
+// Создание объекта изображения и установка источника
+const backgroundImage = new Image();
+backgroundImage.src = selectedImage;
+backgroundImage.onload = () => {
+  console.log('Фоновая картинка загружена:', selectedImage);
   
-  const repairInterval = setInterval(() => {
-    const resources = command.target.owner === "player" ? gameState.playerResources : gameState.aiResources;
-    if (resources.gold < costGoldPerInterval || resources.silicon < costSiliconPerInterval || resources.plasma < costPlasmaPerInterval) {
-      showWarning("Недостаточно ресурсов для ремонта");
-      clearInterval(repairInterval);
-      command.target.isRepairing = false;
-      processCommandQueue(repairman);
-      return;
-    }
-    resources.gold -= costGoldPerInterval;
-    resources.silicon -= costSiliconPerInterval;
-    resources.plasma -= costPlasmaPerInterval;
-    updateResourceUI();
-    
-    if (command.target.health >= command.target.maxHealth || command.target.health <= 0) {
-      console.log("Ремонт завершён для объекта", command.target);
-      clearInterval(repairInterval);
-      command.target.isRepairing = false;
-      processCommandQueue(repairman);
-      return;
-    }
-    command.target.health += (repairRate * intervalTime) / 1000;
-    if (command.target.health > command.target.maxHealth) {
-      command.target.health = command.target.maxHealth;
-    }
-  }, intervalTime);
+  // Пример установки фона для body
+  document.body.style.backgroundImage = `url(${selectedImage})`;
+  document.body.style.backgroundSize = 'cover';
+  document.body.style.backgroundPosition = 'center';
+	
+};
+let isWallDragging = false;
+let wallDragStart = { x: 0, y: 0 };
+let currentWallDragZone = null;
+
+
+// Обработчики перетаскивания карты
+// Универсальная функция для получения координат события (mouse/touch)
+function getEventPosition(e) {
+  if (e.touches && e.touches.length > 0) {
+    return { x: e.touches[0].clientX, y: e.touches[0].clientY };
+  }
+  return { x: e.clientX, y: e.clientY };
 }
 
-// Универсальная функция запроса ремонта
-function requestRepair(target, workshop, repairman) {
-  // Если объект уже в процессе ремонта и прошло меньше 5 сек с последней попытки – ничего не делаем
-  if (target.isRepairing && target.repairAttemptedAt && performance.now() - target.repairAttemptedAt < 5000) return;
-  target.isRepairing = true;
-  target.repairAttemptedAt = performance.now();
+// Глобальные переменные для перетаскивания карты
+let isDragging = false;
+let dragStart = { x: 0, y: 0 };
+let cameraStart = { offsetX: 0, offsetY: 0 };
 
-  const distance = Math.hypot(target.x - workshop.x, target.y - workshop.y);
-  if (distance > workshop.controlRadius) return;
-
-  // Если ремонтника не передали, ищем доступного
-  if (!repairman) {
-    // Используем let для временной переменной availableRepairmen, чтобы потом выбрать одного ремонтника
-    let availableRepairmen = gameState.units.filter(u => u.owner === target.owner && u.type === "repairman");
-    if (availableRepairmen.length > 0) {
-      availableRepairmen.sort((a, b) =>
-        Math.hypot(a.x - workshop.x, a.y - workshop.y) - Math.hypot(b.x - workshop.x, b.y - workshop.y)
-      );
-      repairman = availableRepairmen[0];
-    }
+// --- Обработчики перетаскивания карты ---
+// Мышь
+canvas.addEventListener("mousedown", e => {
+  isDragging = true;
+  dragStart = getEventPosition(e);
+  cameraStart = { offsetX: camera.offsetX, offsetY: camera.offsetY };
+});
+canvas.addEventListener("mousemove", e => {
+  if (isDragging) {
+    const pos = getEventPosition(e);
+    const dx = pos.x - dragStart.x;
+    const dy = pos.y - dragStart.y;
+    camera.offsetX = cameraStart.offsetX + dx;
+    camera.offsetY = cameraStart.offsetY + dy;
   }
-  
-  // При желании можно вести подсчет количества ремонтов:
-  if (target.repairCount === undefined) {
-    target.repairCount = 0;
-  }
-  target.repairCount++;
+});
+canvas.addEventListener("mouseup", () => { isDragging = false; });
+canvas.addEventListener("mouseleave", () => { isDragging = false; });
 
-  if (repairman) {
-    repairman.commandQueue = [];
-    repairman.commandQueue.push({ type: "repair", target: target, workshop: workshop });
-    processCommandQueue(repairman);
+// Touch
+canvas.addEventListener("touchstart", e => {
+  e.preventDefault();
+  isDragging = true;
+  dragStart = getEventPosition(e);
+  cameraStart = { offsetX: camera.offsetX, offsetY: camera.offsetY };
+}, { passive: false });
+canvas.addEventListener("touchmove", e => {
+  e.preventDefault();
+  if (isDragging) {
+    const pos = getEventPosition(e);
+    const dx = pos.x - dragStart.x;
+    const dy = pos.y - dragStart.y;
+    camera.offsetX = cameraStart.offsetX + dx;
+    camera.offsetY = cameraStart.offsetY + dy;
+  }
+}, { passive: false });
+canvas.addEventListener("touchend", e => {
+  e.preventDefault();
+  isDragging = false;
+  // Если касание не было перетаскиванием (движение минимально), вызываем обработчик клика
+  const pos = getEventPosition(e);
+  handleClick(pos.x, pos.y);
+}, { passive: false });
+
+// --- Обработчики кликов ---
+// Общий обработчик клика для mouse и touch
+canvas.addEventListener("click", e => {
+  // Если не перетаскиваем (mouse click)
+  if (!isDragging) {
+    const pos = getEventPosition(e);
+    handleClick(pos.x, pos.y);
+  }
+});
+
+// Обработчик двойного клика
+canvas.addEventListener("dblclick", e => {
+  clearBuildZones();
+  const pos = screenToWorld(e.clientX, e.clientY);
+  const clickedBuilding = gameState.buildings.find(b =>
+    pos.x >= b.x - b.width/2 && pos.x <= b.x + b.width/2 &&
+    pos.y >= b.y - b.height/2 && pos.y <= b.y + b.height/2
+  );
+  if (clickedBuilding) return;
+  const unitRadius = 5;
+  const clickedUnit = gameState.units.find(u => 
+    u.owner === "player" && Math.hypot(u.x - pos.x, u.y - pos.y) < unitRadius
+  );
+  if (clickedUnit) {
+    selectedUnits = gameState.units.filter(u => u.owner === "player" && u.type === clickedUnit.type);
   } else {
-    showWarning("Нет доступных ремонтников для ремонта");
+    startSelectionFrame(e);
   }
-}
+});
 
+// Обработчик контекстного меню (правый клик)
+canvas.addEventListener("contextmenu", e => {
+  e.preventDefault();
+  clearBuildZones();
+  const pos = screenToWorld(e.clientX, e.clientY);
+  const unitRadius = 5;
+  let enemyTarget = gameState.units.find(u => 
+    u.owner !== "player" && Math.hypot(u.x - pos.x, u.y - pos.y) < unitRadius
+  );
+  if (!enemyTarget) {
+    enemyTarget = gameState.buildings.find(b =>
+      b.owner !== "player" &&
+      pos.x >= b.x - b.width/2 && pos.x <= b.x + b.width/2 &&
+      pos.y >= b.y - b.height/2 && pos.y <= b.y + b.height/2
+    );
+  }
+  if (enemyTarget) {
+    selectedUnits.forEach(unit => {
+      unit.commandQueue = [];
+      unit.commandQueue.push({ type: "attack", target: enemyTarget });
+    });
+  } else {
+    selectedUnits = [];
+  }
+});
 
-// Функция автоматического ремонта повреждённых объектов
-function autoRepairDamagedObjects() {
-  // Собираем все объекты, у которых health меньше maxHealth на значимую величину (например, 10% потерь)
-  const repairables = [].concat(
-    gameState.units.filter(u => u.health < u.maxHealth * 0.99),
-    gameState.buildings.filter(b => b.health < b.maxHealth * 0.99)
+// Универсальная функция обработки клика
+function handleClick(clientX, clientY) {
+  clearBuildZones();
+  const pos = screenToWorld(clientX, clientY);
+  
+  // Если выбран ремонтник, обрабатываем особый случай
+  const selectedRepairman = selectedUnits.find(u => u.type === "repairman");
+  if (selectedRepairman) {
+    const clickedResource = gameState.resources.find(r => Math.hypot(r.x - pos.x, r.y - pos.y) < 10);
+    if (clickedResource) return;
+    const clickedBuilding = gameState.buildings.find(b =>
+      b.owner === "player" &&
+      pos.x >= b.x - b.width/2 && pos.x <= b.x + b.width/2 &&
+      pos.y >= b.y - b.height/2 && pos.y <= b.y + b.height/2
+    );
+    // Дополнительная логика для ремонта (если нужна)
+  }
+  
+  const clickedResource = gameState.resources.find(r => Math.hypot(r.x - pos.x, r.y - pos.y) < 10);
+  const clickedBuilding = gameState.buildings.find(b =>
+    b.owner === "player" &&
+    pos.x >= b.x - b.width/2 && pos.x <= b.x + b.width/2 &&
+    pos.y >= b.y - b.height/2 && pos.y <= b.y + b.height/2
   );
   
-  repairables.forEach(target => {
-    // Если объект уже находится в ремонте и прошло более 1 сек с последней попытки – сбрасываем флаг
-    if (target.isRepairing && target.repairAttemptedAt && performance.now() - target.repairAttemptedAt > 1000) {
-      target.isRepairing = false;
-    }
-    if (target.isRepairing) return;
-    
-    // Находим мастерские для данного владельца
-    let workshops = gameState.buildings.filter(b => b.owner === target.owner && b.type === "repairWorkshop");
-    if (workshops.length === 0) return;
-    
-    // Сортируем мастерские по расстоянию до объекта
-    workshops.sort((a, b) =>
-      Math.hypot(target.x - a.x, target.y - a.y) - Math.hypot(target.x - b.x, target.y - b.y)
-    );
-    
-    const nearestWorkshop = workshops[0];
-    // Запускаем ремонт, только если объект находится в зоне контроля мастерской
-    if (Math.hypot(target.x - nearestWorkshop.x, target.y - nearestWorkshop.y) <= nearestWorkshop.controlRadius) {
-      requestRepair(target, nearestWorkshop);
-    }
-  });
-}
-
-
-// Функция, возвращающая прямоугольник зоны строительства для здания
-function getBuildZoneRect(building) {
-  // Если здание имеет buildZoneMultiplier (например, для маяка или базы), используем его, иначе — значение по умолчанию
-  const zoneMargin = building.buildZoneMultiplier || 20;
-  return {
-    left: building.x - building.width / 2 - zoneMargin,
-    top: building.y - building.height / 2 - zoneMargin,
-    right: building.x + building.width / 2 + zoneMargin,
-    bottom: building.y + building.height / 2 + zoneMargin
-  };
-}
-
-// Функция проверки, находится ли точка (x, y) в зоне строительства какого-либо здания
-function isInAnyBuildZone(x, y) {
-  for (let b of gameState.buildings) {
-    // Для складов можно использовать меньший отступ, если нужно
-    let currentMargin = (b.type === "warehouse") ? 10 : (b.buildZoneMultiplier || 20);
-    const bRect = {
-      left: b.x - b.width / 2 - currentMargin,
-      top: b.y - b.height / 2 - currentMargin,
-      right: b.x + b.width / 2 + currentMargin,
-      bottom: b.y + b.height / 2 + currentMargin
-    };
-    if (x >= bRect.left && x <= bRect.right && y >= bRect.top && y <= bRect.bottom) {
-      return true;
+  if (clickedBuilding) {
+    if (clickedBuilding.type === "warehouse") { hireWorkerForPlayer(clickedBuilding); return; }
+    if (clickedBuilding.type === "barracks") { hireFighterForPlayer(clickedBuilding); return; }
+    if (clickedBuilding.type === "barracks2") { hireAssaultForPlayer(clickedBuilding); return; }
+    if (clickedBuilding.type === "repairWorkshop") { recallRepairmenFromWorkshop(clickedBuilding); return; }
+    if (clickedBuilding.type === "barracks3") { hireEliteForPlayer(clickedBuilding); return; }
+    if (clickedBuilding.type === "base" || clickedBuilding.type === "base2" ||
+        clickedBuilding.type === "base3" || clickedBuilding.type === "beacon") { 
+      showBuildingMenu(clickedBuilding); 
+      return;
     }
   }
-  return false;
-}
-
-// Функция проверки, находится ли точка в пределах зоны союзных построек.
-// Здесь в качестве зоны используется радиус от каждой союзной постройки.
-function isWithinAlliedZone(x, y) {
-  const zoneRadius = 100; // можно настроить радиус зоны
-  // Считаем, что база ИИ тоже является союзной постройкой
-  if (Math.hypot(x - aiBase.x, y - aiBase.y) <= zoneRadius) {
-    return true;
-  }
-  // Проверяем остальные союзные здания
-  for (const building of gameState.buildings.filter(b => b.owner === "ai")) {
-    if (Math.hypot(x - building.x, y - building.y) <= zoneRadius) {
-      return true;
-    }
-  }
-  return false;
-}
-
-
-
-/* === Условие победы === */
-function checkVictoryConditions() {
-  if (!aiBase || aiBase.health <= 0) {
-    clearInterval(aiLogicInterval);
-    cancelAnimationFrame(gameLoop);
-    showVictoryMessage("Победа! База противника уничтожена.");
+  
+  if (clickedResource && selectedUnits.length > 0) {
+    selectedUnits.forEach(unit => {
+      if (unit.type === "worker") {
+        unit.commandQueue = [];
+        unit.commandQueue.push({ type: "gather", resource: clickedResource });
+      }
+    });
     return;
   }
-  if (!playerBase || playerBase.health <= 0) {
-    clearInterval(aiLogicInterval);
-    cancelAnimationFrame(gameLoop);
-    showVictoryMessage("Поражение! Ваша база уничтожена.");
-    return;
+  
+  const unitRadius = 5;
+  const clickedUnit = gameState.units.find(u => 
+    u.owner === "player" && Math.hypot(u.x - pos.x, u.y - pos.y) < unitRadius
+  );
+  
+  if (clickedUnit) {
+    selectedUnits = [clickedUnit];
+  } else if (selectedUnits.length > 0) {
+    // Если есть выделенные юниты, задаём им команду перемещения
+    selectedUnits.forEach(unit => {
+      unit.commandQueue = [];
+      if (unit.currentMovementAnimation) {
+        cancelAnimationFrame(unit.currentMovementAnimation);
+        unit.currentMovementAnimation = null;
+      }
+      const randomTarget = getRandomTargetPoint(pos.x, pos.y, 50);
+      unit.commandQueue.push({ type: "move", x: randomTarget.x, y: randomTarget.y });
+    });
   }
 }
-function showVictoryMessage(message) {
-  const victoryDiv = document.createElement("div");
-  victoryDiv.innerText = message;
-  victoryDiv.style.position = "fixed";
-  victoryDiv.style.top = "50%";
-  victoryDiv.style.left = "50%";
-  victoryDiv.style.transform = "translate(-50%, -50%)";
-  victoryDiv.style.fontSize = "48px";
-  victoryDiv.style.color = "yellow";
-  victoryDiv.style.backgroundColor = "rgba(0,0,0,0.8)";
-  victoryDiv.style.padding = "20px 40px";
-  victoryDiv.style.borderRadius = "10px";
-  victoryDiv.style.zIndex = "10000";
-  document.body.appendChild(victoryDiv);
-}
 
-function rectsOverlap(r1, r2) {
-  return !(r1.right <= r2.left || r1.left >= r2.right ||
-           r1.bottom <= r2.top || r1.top >= r2.bottom);
-}
 
 
 
