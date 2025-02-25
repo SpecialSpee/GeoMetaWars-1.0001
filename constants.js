@@ -298,6 +298,44 @@ let wallDragStart = { x: 0, y: 0 };
 let currentWallDragZone = null;
 
 
+
+// Переменная для хранения начального расстояния между касаниями
+let initialPinchDistance = null;
+
+// Обработчик для обработки pinch-zoom
+canvas.addEventListener("touchmove", e => {
+  e.preventDefault();
+  if (e.touches.length === 2) {
+    const touch1 = e.touches[0];
+    const touch2 = e.touches[1];
+    const currentDistance = Math.hypot(touch2.clientX - touch1.clientX, touch2.clientY - touch1.clientY);
+    if (initialPinchDistance === null) {
+      initialPinchDistance = currentDistance;
+    } else {
+      const scaleFactor = currentDistance / initialPinchDistance;
+      let newScale = camera.scale * scaleFactor;
+      // Ограничиваем зум сверху
+      if (newScale > MAX_SCALE) newScale = MAX_SCALE;
+      // Вычисляем центр между двумя касаниями
+      const pinchCenterX = (touch1.clientX + touch2.clientX) / 2;
+      const pinchCenterY = (touch1.clientY + touch2.clientY) / 2;
+      setZoom(newScale, pinchCenterX, pinchCenterY);
+      // Обновляем начальное расстояние для следующего события
+      initialPinchDistance = currentDistance;
+    }
+  }
+}, { passive: false });
+
+// Сброс переменной при окончании касания
+canvas.addEventListener("touchend", e => {
+  if (e.touches.length < 2) {
+    initialPinchDistance = null;
+  }
+}, { passive: false });
+
+
+
+
 // Обработчики перетаскивания карты
 // Универсальная функция для получения координат события (mouse/touch)
 // Универсальная функция для получения координат события (mouse/touch)
