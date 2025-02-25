@@ -1,35 +1,335 @@
-// Функция отрисовки постоянного тумана (показывает, что участок уже был открыт)
-// Здесь мы можем, например, затемнять его слегка (например, прозрачный серый цвет),
-// чтобы скрыть ресурсы, но не затемнять полностью текущую динамику.
+function calculateWallPosition(base) {
+  // Выбираем случайный угол для размещения стены вокруг базы.
+  const angle = Math.random() * 2 * Math.PI;
+  // Определяем отступ: половина ширины базы плюс фиксированный отступ (например, 20 пикселей)
+  const offset = base.width / 2 + 20;
+  return {
+    x: base.x + offset * Math.cos(angle),
+    y: base.y + offset * Math.sin(angle)
+  };
+}
+
+function randomFarPosition(building, minDistance) {
+  // minDistance – минимальное расстояние от здания
+  const angle = Math.random() * Math.PI * 3;
+  // Можно задать, что случайное расстояние будет в диапазоне от minDistance до, например, 2*minDistance
+  const distance = minDistance + Math.random() * minDistance;
+  return { 
+    x: building.x + distance * Math.cos(angle), 
+    y: building.y + distance * Math.sin(angle) 
+  };
+}
+
+function countBuildings(buildingType, owner) {
+  return gameState.buildings.filter(b => b.owner === owner && b.type === buildingType).length;
+}
+
+function canAfford(cost, owner) {
+  if (owner === "ai") {
+    return gameState.aiResources.gold >= cost.gold &&
+           gameState.aiResources.silicon >= cost.silicon &&
+           gameState.aiResources.plasma >= cost.plasma;
+  } else if (owner === "player") {
+    return gameState.playerResources.gold >= cost.gold &&
+           gameState.playerResources.silicon >= cost.silicon &&
+           gameState.playerResources.plasma >= cost.plasma;
+  }
+  return false;
+}
+// Функция оценки плотности ресурсов в заданной области
+function evaluateResourceDensity(x, y, radius) {
+  let density = 0;
+  gameState.resources.forEach(resource => {
+    const d = Math.hypot(resource.x - x, resource.y - y);
+    if (d < radius) {
+      density += resource.amount; // можно добавить вес для разных типов ресурсов
+    }
+  });
+  return density;
+}
+
+function attemptToBuildWarehouse() {
+  if (countBuildings("warehouse", "ai") < DESIRED_WAREHOUSE_COUNT) {
+    const pos = findOptimalWarehousePosition();
+    if (pos && canAfford(WAREHOUSE_COST, "ai")) {
+      if (aiPlaceBuilding("warehouse", pos.x, pos.y)) {
+        console.log("AI построил склад в оптимальной позиции", pos);
+      }
+    }
+  }
+}
+
+function randomNearbyPosition(building, distance) {
+  const angle = Math.random() * Math.PI * 2;
+  return { x: building.x + distance * Math.cos(angle), y: building.y + distance * Math.sin(angle) };
+}
+
+function isPositionInBuildingZone(x, y) {
+  const zoneMargin = 20; // базовый отступ для зоны строительства
+  for (let b of gameState.buildings) {
+    // Для складов можно использовать меньший margin, если требуется
+    let currentMargin = zoneMargin;
+    if (b.type === "warehouse") {
+      currentMargin = 10;
+    }
+    const bRect = {
+      left: b.x - b.width / 2 - currentMargin,
+      top: b.y - b.height / 2 - currentMargin,
+      right: b.x + b.width / 2 + currentMargin,
+      bottom: b.y + b.height / 2 + currentMargin
+    };
+    if (x >= bRect.left && x <= bRect.right && y >= bRect.top && y <= bRect.bottom) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function startRepairCycle(repairMan, workshop) {
+  console.log("Запущен цикл ремонта для ремонтника", repairMan, "из мастерской", workshop);
+  // Логика ремонта
+}
+
+function startRepairProcess(repairman, command) {
+  console.log("Запущен процесс ремонта для объекта", command.target, "ремонтником", repairman);
+  const repairRate = 5;
+  const intervalTime = 100;
+  const REPAIR_COST = { gold: 2, silicon: 5, plasma: 1 };
+  const intervalsPerSecond = 1000 / intervalTime;
+  const costGoldPerInterval = REPAIR_COST.gold / intervalsPerSecond;
+  const costSiliconPerInterval = REPAIR_COST.silicon / intervalsPerSecond;
+  const costPlasmaPerInterval = REPAIR_COST.plasma / intervalsPerSecond;
+  
+  const repairInterval = setInterval(() => {
+    const resources = command.target.owner === "player" ? gameState.playerResources : gameState.aiResources;
+    if (resources.gold < costGoldPerInterval || resources.silicon < costSiliconPerInterval || resources.plasma < costPlasmaPerInterval) {
+      showWarning("Недостаточно ресурсов для ремонта");
+      clearInterval(repairInterval);
+      command.target.isRepairing = false;
+      processCommandQueue(repairman);
+      return;
+    }
+    resources.gold -= costGoldPerInterval;
+    resources.silicon -= costSiliconPerInterval;
+    resources.plasma -= costPlasmaPerInterval;
+    updateResourceUI();
+    
+    if (command.target.health >= command.target.maxHealth || command.target.health <= 0) {
+      console.log("Ремонт завершён для объекта", command.target);
+      clearInterval(repairInterval);
+      command.target.isRepairing = false;
+      processCommandQueue(repairman);
+      return;
+    }
+    command.target.health += (repairRate * intervalTime) / 1000;
+    if (command.target.health > command.target.maxHealth) {
+      command.target.health = command.target.maxHealth;
+    }
+  }, intervalTime);
+}
+// Универсальная функция запроса ремонта
+function requestRepair(target, workshop, repairman) {
+  // Если объект уже в процессе ремонта и прошло меньше 5 сек с последней попытки – ничего не делаем
+  if (target.isRepairing && target.repairAttemptedAt && performance.now() - target.repairAttemptedAt < 5000) return;
+  target.isRepairing = true;
+  target.repairAttemptedAt = performance.now();
+
+  const distance = Math.hypot(target.x - workshop.x, target.y - workshop.y);
+  if (distance > workshop.controlRadius) return;
+
+  // Если ремонтника не передали, ищем доступного
+  if (!repairman) {
+    // Используем let для временной переменной availableRepairmen, чтобы потом выбрать одного ремонтника
+    let availableRepairmen = gameState.units.filter(u => u.owner === target.owner && u.type === "repairman");
+    if (availableRepairmen.length > 0) {
+      availableRepairmen.sort((a, b) =>
+        Math.hypot(a.x - workshop.x, a.y - workshop.y) - Math.hypot(b.x - workshop.x, b.y - workshop.y)
+      );
+      repairman = availableRepairmen[0];
+    }
+  }
+  
+  // При желании можно вести подсчет количества ремонтов:
+  if (target.repairCount === undefined) {
+    target.repairCount = 0;
+  }
+  target.repairCount++;
+
+  if (repairman) {
+    repairman.commandQueue = [];
+    repairman.commandQueue.push({ type: "repair", target: target, workshop: workshop });
+    processCommandQueue(repairman);
+  } else {
+    showWarning("Нет доступных ремонтников для ремонта");
+  }
+}
+// Функция автоматического ремонта повреждённых объектов
+function autoRepairDamagedObjects() {
+  // Собираем все объекты, у которых health меньше maxHealth на значимую величину (например, 10% потерь)
+  const repairables = [].concat(
+    gameState.units.filter(u => u.health < u.maxHealth * 0.99),
+    gameState.buildings.filter(b => b.health < b.maxHealth * 0.99)
+  );
+  
+  repairables.forEach(target => {
+    // Если объект уже находится в ремонте и прошло более 1 сек с последней попытки – сбрасываем флаг
+    if (target.isRepairing && target.repairAttemptedAt && performance.now() - target.repairAttemptedAt > 1000) {
+      target.isRepairing = false;
+    }
+    if (target.isRepairing) return;
+    
+    // Находим мастерские для данного владельца
+    let workshops = gameState.buildings.filter(b => b.owner === target.owner && b.type === "repairWorkshop");
+    if (workshops.length === 0) return;
+    
+    // Сортируем мастерские по расстоянию до объекта
+    workshops.sort((a, b) =>
+      Math.hypot(target.x - a.x, target.y - a.y) - Math.hypot(target.x - b.x, target.y - b.y)
+    );
+    
+    const nearestWorkshop = workshops[0];
+    // Запускаем ремонт, только если объект находится в зоне контроля мастерской
+    if (Math.hypot(target.x - nearestWorkshop.x, target.y - nearestWorkshop.y) <= nearestWorkshop.controlRadius) {
+      requestRepair(target, nearestWorkshop);
+    }
+  });
+}
+// Функция, возвращающая прямоугольник зоны строительства для здания
+function getBuildZoneRect(building) {
+  // Если здание имеет buildZoneMultiplier (например, для маяка или базы), используем его, иначе — значение по умолчанию
+  const zoneMargin = building.buildZoneMultiplier || 20;
+  return {
+    left: building.x - building.width / 2 - zoneMargin,
+    top: building.y - building.height / 2 - zoneMargin,
+    right: building.x + building.width / 2 + zoneMargin,
+    bottom: building.y + building.height / 2 + zoneMargin
+  };
+}
+// Функция проверки, находится ли точка (x, y) в зоне строительства какого-либо здания
+function isInAnyBuildZone(x, y) {
+  for (let b of gameState.buildings) {
+    // Для складов можно использовать меньший отступ, если нужно
+    let currentMargin = (b.type === "warehouse") ? 10 : (b.buildZoneMultiplier || 20);
+    const bRect = {
+      left: b.x - b.width / 2 - currentMargin,
+      top: b.y - b.height / 2 - currentMargin,
+      right: b.x + b.width / 2 + currentMargin,
+      bottom: b.y + b.height / 2 + currentMargin
+    };
+    if (x >= bRect.left && x <= bRect.right && y >= bRect.top && y <= bRect.bottom) {
+      return true;
+    }
+  }
+  return false;
+}
+// Функция проверки, находится ли точка в пределах зоны союзных построек.
+// Здесь в качестве зоны используется радиус от каждой союзной постройки.
+function isWithinAlliedZone(x, y) {
+  const zoneRadius = 100; // можно настроить радиус зоны
+  // Считаем, что база ИИ тоже является союзной постройкой
+  if (Math.hypot(x - aiBase.x, y - aiBase.y) <= zoneRadius) {
+    return true;
+  }
+  // Проверяем остальные союзные здания
+  for (const building of gameState.buildings.filter(b => b.owner === "ai")) {
+    if (Math.hypot(x - building.x, y - building.y) <= zoneRadius) {
+      return true;
+    }
+  }
+  return false;
+}
+/* === Условие победы === */
+function checkVictoryConditions() {
+  if (!aiBase || aiBase.health <= 0) {
+    clearInterval(aiLogicInterval);
+    cancelAnimationFrame(gameLoop);
+    showVictoryMessage("Победа! База противника уничтожена.");
+    return;
+  }
+  if (!playerBase || playerBase.health <= 0) {
+    clearInterval(aiLogicInterval);
+    cancelAnimationFrame(gameLoop);
+    showVictoryMessage("Поражение! Ваша база уничтожена.");
+    return;
+  }
+}
+
+function showVictoryMessage(message) {
+  const victoryDiv = document.createElement("div");
+  victoryDiv.innerText = message;
+  victoryDiv.style.position = "fixed";
+  victoryDiv.style.top = "50%";
+  victoryDiv.style.left = "50%";
+  victoryDiv.style.transform = "translate(-50%, -50%)";
+  victoryDiv.style.fontSize = "48px";
+  victoryDiv.style.color = "yellow";
+  victoryDiv.style.backgroundColor = "rgba(0,0,0,0.8)";
+  victoryDiv.style.padding = "20px 40px";
+  victoryDiv.style.borderRadius = "10px";
+  victoryDiv.style.zIndex = "10000";
+  document.body.appendChild(victoryDiv);
+}
+
+function rectsOverlap(r1, r2) {
+  return !(r1.right <= r2.left || r1.left >= r2.right ||
+           r1.bottom <= r2.top || r1.top >= r2.bottom);
+}
+// Инициализация тумана войны с расширением persistentFogMap без полного сброса
 function initFogOfWar() {
   const cols = Math.ceil(worldWidth / FOG_CELL_SIZE);
   const rows = Math.ceil(worldHeight / FOG_CELL_SIZE);
+
+  // Пересоздаём fogMap полностью
   fogMap = [];
-  persistentFogMap = []; // Обязательно инициализируем здесь!	
   for (let r = 0; r < rows; r++) {
-    fogMap[r] = new Array(cols).fill(0); // 0 – ячейка покрыта туманом, 1 – видна
-	persistentFogMap[r] = new Array(cols).fill(0); // 0 – ячейка не открыта ранее, 1 – уже была открыта
+    fogMap[r] = new Array(cols).fill(0);
+  }
+  
+  // Если persistentFogMap ещё не создан, создаём его полностью
+  if (!persistentFogMap || persistentFogMap.length === 0) {
+    persistentFogMap = [];
+    for (let r = 0; r < rows; r++) {
+      persistentFogMap[r] = new Array(cols).fill(0);
+    }
+  } else {
+    // Если уже существует, расширяем (или обрезаем) его до новых размеров, сохраняя уже открытые ячейки
+    const currentRows = persistentFogMap.length;
+    const currentCols = persistentFogMap[0].length;
+    // Расширяем или обрезаем строки
+    for (let r = 0; r < rows; r++) {
+      if (r < currentRows) {
+        // Расширяем текущую строку, если нужно
+        while (persistentFogMap[r].length < cols) {
+          persistentFogMap[r].push(0);
+        }
+        // Если строка стала длиннее, обрезаем её
+        persistentFogMap[r] = persistentFogMap[r].slice(0, cols);
+      } else {
+        // Добавляем новые строки
+        persistentFogMap[r] = new Array(cols).fill(0);
+      }
+    }
+    // Если новых строк меньше, чем было раньше, обрезаем массив строк
+    persistentFogMap = persistentFogMap.slice(0, rows);
   }
 }
- //Функция обновления тумана войны: сбрасывает fogMap и отмечает ячейки, находящиеся в зоне видимости юнитов игрока
+// Функция обновления тумана войны (не изменена логика, но добавлена проверка)
 function updateFogOfWar() {
-  // Сброс всех ячеек до состояния "туман" (0)
+  if (!fogMap || fogMap.length === 0 || !fogMap[0]) return;
+  
+  // Сброс всех ячеек fogMap до состояния "туман" (0)
   for (let r = 0; r < fogMap.length; r++) {
     for (let c = 0; c < fogMap[r].length; c++) {
       fogMap[r][c] = 0;
     }
   }
   
-  // Собираем все объекты, от которых должен сниматься туман:
-  // юниты игрока и здания игрока.
+  // Источники видимости: юниты и здания игрока
   let visionSources = gameState.units.filter(u => u.owner === "player")
     .concat(gameState.buildings.filter(b => b.owner === "player"));
   
   visionSources.forEach(source => {
-    // Если объект задаёт свой радиус видимости, можно использовать его,
-    // иначе - общий VISION_RADIUS.
     const visionRadius = source.visionRadius || VISION_RADIUS;
-    
     const startCol = Math.max(0, Math.floor((source.x - visionRadius) / FOG_CELL_SIZE));
     const endCol = Math.min(fogMap[0].length - 1, Math.floor((source.x + visionRadius) / FOG_CELL_SIZE));
     const startRow = Math.max(0, Math.floor((source.y - visionRadius) / FOG_CELL_SIZE));
@@ -37,24 +337,18 @@ function updateFogOfWar() {
     
     for (let r = startRow; r <= endRow; r++) {
       for (let c = startCol; c <= endCol; c++) {
-        // Вычисляем центр ячейки в мировых координатах
         const cellCenterX = c * FOG_CELL_SIZE + FOG_CELL_SIZE / 2;
         const cellCenterY = r * FOG_CELL_SIZE + FOG_CELL_SIZE / 2;
-        // Если дистанция между источником и центром ячейки меньше радиуса видимости – отмечаем её как видимую (1)
         if (Math.hypot(source.x - cellCenterX, source.y - cellCenterY) <= visionRadius) {
           fogMap[r][c] = 1;
-			 // Обновляем persistentFogMap: если ячейка видима, то она считается открытой навсегда
           persistentFogMap[r][c] = 1;
         }
       }
     }
   });
-  
-  //console.log("Пример fogMap (первая строка):", fogMap[0]);
 }
-//Функция отрисовки тумана войны: накладывает полупрозрачный слой на невидимые ячейки
+// Функция отрисовки динамичного тумана (на текущем участке)
 function renderFogOfWar() {
-	//console.log("renderFogOfWar called, fogMap:", fogMap);
   ctx.save();
   const cellScreenSize = FOG_CELL_SIZE * camera.scale;
   for (let r = 0; r < fogMap.length; r++) {
@@ -63,7 +357,6 @@ function renderFogOfWar() {
         const worldX = c * FOG_CELL_SIZE;
         const worldY = r * FOG_CELL_SIZE;
         const screenPos = worldToScreen(worldX, worldY);
-        // Вычисляем непрозрачность: для полностью невидимой ячейки alpha = 0.7
         const alpha = 0.1 * (1 - fogMap[r][c]);
         ctx.fillStyle = `rgba(0, 0, 0, ${alpha})`;
         ctx.fillRect(screenPos.x, screenPos.y, cellScreenSize, cellScreenSize);
@@ -73,47 +366,42 @@ function renderFogOfWar() {
   ctx.restore();
 }
 // Функция отрисовки постоянного тумана (показывает, что участок уже был открыт)
-// Здесь мы можем, например, затемнять его слегка (например, прозрачный серый цвет),
-// чтобы скрыть ресурсы, но не затемнять полностью текущую динамику.
 function renderPersistentFog() {
   ctx.save();
   const cellScreenSize = FOG_CELL_SIZE * camera.scale;
   for (let r = 0; r < persistentFogMap.length; r++) {
     for (let c = 0; c < persistentFogMap[r].length; c++) {
-      // Если ячейка не была открыта ранее (persistentFogMap == 0), рисуем затемнение (полностью закрываем)
-      // Если ячейка открыта (== 1) – можно рисовать полупрозрачный слой, чтобы скрыть ресурсы.
       if (persistentFogMap[r][c] === 0) {
-        // Ячейка не открыта: рисуем сплошное затемнение (черный)
+        // Если ячейка никогда не была открыта – полностью затемняем
         const worldX = c * FOG_CELL_SIZE;
         const worldY = r * FOG_CELL_SIZE;
         const screenPos = worldToScreen(worldX, worldY);
-        ctx.fillStyle = "rgba(0,0,0,1)"; // полное затемнение
+        ctx.fillStyle = "rgba(0,0,0,1)";
         ctx.fillRect(screenPos.x, screenPos.y, cellScreenSize, cellScreenSize);
       } else if (fogMap[r][c] < 1) {
-        // Ячейка была открыта ранее, но сейчас не видна: затемняем её слегка (например, 0.5)
+        // Если ячейка была открыта ранее, но сейчас не видна – слегка затемняем
         const worldX = c * FOG_CELL_SIZE;
         const worldY = r * FOG_CELL_SIZE;
         const screenPos = worldToScreen(worldX, worldY);
         ctx.fillStyle = "rgba(0,0,0,0.1)";
         ctx.fillRect(screenPos.x, screenPos.y, cellScreenSize, cellScreenSize);
       }
-      // Если динамически видна (fogMap[r][c] === 1), ничего не рисуем – игрок видит детали.
+      // Если fogMap[r][c] === 1, ничего не рисуем – участок полностью виден
     }
   }
   ctx.restore();
 }
-
+// Функция отрисовки дополнительного динамичного тумана
 function renderDynamicFog() {
   ctx.save();
   const cellScreenSize = FOG_CELL_SIZE * camera.scale;
   for (let r = 0; r < fogMap.length; r++) {
     for (let c = 0; c < fogMap[r].length; c++) {
-      if (fogMap[r][c] < 1) { // если не видна сейчас
+      if (fogMap[r][c] < 1) {
         const worldX = c * FOG_CELL_SIZE;
         const worldY = r * FOG_CELL_SIZE;
         const screenPos = worldToScreen(worldX, worldY);
-        // Для полностью невидимых ячеек — затемняем их (alpha = 0.7)
-        const alpha = 0.1;
+        const alpha = 0.1; // фиксированная степень затемнения
         ctx.fillStyle = `rgba(0,0,0,${alpha})`;
         ctx.fillRect(screenPos.x, screenPos.y, cellScreenSize, cellScreenSize);
       }
@@ -121,20 +409,29 @@ function renderDynamicFog() {
   }
   ctx.restore();
 }
-// Функция изменения размеров canvas и виртуального мира!!!
+// Функция изменения размеров canvas и виртуального мира с сохранением текущего вида
 function resizeCanvas() {
+  const oldWidth = canvas.width;
+  const oldHeight = canvas.height;
+  
   canvas.width = window.innerWidth;
   canvas.height = window.innerHeight;
   // Размеры виртуального мира – в 3 раза больше видимой области
   worldWidth = canvas.width * 3;
   worldHeight = canvas.height * 3;
   console.log("worldWidth:", worldWidth, "worldHeight:", worldHeight);
+  
   starField.init();
-  initFogOfWar(); // Инициализируем сетку тумана войны при изменении размеров
+  // Вместо полного сброса persistentFogMap, расширяем его через initFogOfWar
+  initFogOfWar();
+  
+  // Корректируем смещение камеры, чтобы сохранить текущий вид относительно центра
+  const dx = canvas.width / 2 - oldWidth / 2;
+  const dy = canvas.height / 2 - oldHeight / 2;
+  camera.offsetX += dx;
+  camera.offsetY += dy;
 }
-
 window.addEventListener("resize", resizeCanvas);
-
 resizeCanvas();
 /* === Спавн баз игрока и ИИ === */
 function getRandomBasePosition(margin) {
@@ -160,7 +457,7 @@ function getRandomBasePosition(margin) {
   }
   return { x, y };
 }
-const margin = 100;
+
 const playerPos = getRandomBasePosition(margin);
 const aiPos = getRandomBasePosition(margin);
 const playerBase = new Building("base", "player", playerPos.x, playerPos.y);
@@ -169,7 +466,7 @@ gameState.buildings.push(playerBase, aiBase);
 camera.offsetX = canvas.width / 2 - playerBase.x * camera.scale;
 camera.offsetY = canvas.height / 2 - playerBase.y * camera.scale;
 // Ограничение зума
-const MAX_SCALE = 2;
+
 function setZoom(newScale, zoomCenterX, zoomCenterY) {
   if (newScale > MAX_SCALE) { newScale = MAX_SCALE; }
   const worldPoint = screenToWorld(zoomCenterX, zoomCenterY);
@@ -201,31 +498,7 @@ function showWarning(message) {
   document.body.appendChild(warningDiv);
   setTimeout(() => warningDiv.remove(), 2000);
 }
-// Массив с путями к фоновым изображениям
-const backgroundImages = [
-  'src/images/background1.jpeg',
-  'src/images/background2.jpeg',
-  'src/images/background3.jpeg',
-  'src/images/background4.jpeg',
-  'src/images/background5.jpeg',
-	'src/images/background6.jpeg',
-	'src/images/background7.jpeg'
-];
-// Выбор случайного изображения из массива
-const randomIndex = Math.floor(Math.random() * backgroundImages.length);
-const selectedImage = backgroundImages[randomIndex];
-// Создание объекта изображения и установка источника
-const backgroundImage = new Image();
-backgroundImage.src = selectedImage;
-backgroundImage.onload = () => {
-  console.log('Фоновая картинка загружена:', selectedImage);
-  
-  // Пример установки фона для body
-  document.body.style.backgroundImage = `url(${selectedImage})`;
-  document.body.style.backgroundSize = 'cover';
-  document.body.style.backgroundPosition = 'center';
-	
-};
+
 
 function getBuilding(type, owner) {
   return gameState.buildings.find(b => b.type === type && b.owner === owner);

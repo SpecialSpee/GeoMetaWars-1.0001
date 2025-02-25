@@ -1,25 +1,7 @@
-let isWallDragging = false;
-let wallDragStart = { x: 0, y: 0 };
-let currentWallDragZone = null;
 
 
-// Обработчики перетаскивания карты
-let isDragging = false, dragStart = { x: 0, y: 0 }, cameraStart = { offsetX: 0, offsetY: 0 };
-canvas.addEventListener("mousedown", e => {
-  isDragging = true;
-  dragStart = { x: e.clientX, y: e.clientY };
-  cameraStart = { offsetX: camera.offsetX, offsetY: camera.offsetY };
-});
-canvas.addEventListener("mousemove", e => {
-  if (isDragging) {
-    const dx = e.clientX - dragStart.x;
-    const dy = e.clientY - dragStart.y;
-    camera.offsetX = cameraStart.offsetX + dx;
-    camera.offsetY = cameraStart.offsetY + dy;
-  }
-});
-canvas.addEventListener("mouseup", () => { isDragging = false; });
-canvas.addEventListener("mouseleave", () => { isDragging = false; });
+
+
 // Функция, вызывающая ремонтников из мастерской по клику
 function recallRepairmenFromWorkshop(workshop) {
   const recalledRepairmen = gameState.units.filter(u =>
@@ -131,6 +113,18 @@ function enemyNear(building, radius) {
   return enemyFound;
 }
 
+// Вспомогательная функция для удаления юнита и корректировки счетчиков в зданиях
+function removeUnit(unit) {
+  if (unit.type === "worker" && unit.homeWarehouse) {
+    unit.homeWarehouse.workers = Math.max(0, unit.homeWarehouse.workers - 1);
+  }
+  if (unit.type === "repairman" && unit.homeWorkshop) {
+    unit.homeWorkshop.repairman = Math.max(0, unit.homeWorkshop.repairman - 1);
+  }
+  gameState.units = gameState.units.filter(u => u !== unit);
+  selectedUnits = selectedUnits.filter(u => u !== unit);
+}
+
 function updateGameState(deltaTime) {
   updateUnits(deltaTime);
   updateResources(deltaTime);
@@ -154,8 +148,7 @@ function updateGameState(deltaTime) {
                 gameState.buildings = gameState.buildings.filter(b => b !== target);
                 if (target === aiBase) { aiBase = null; }
               } else if (target instanceof Unit) {
-                gameState.units = gameState.units.filter(u => u !== target);
-                selectedUnits = selectedUnits.filter(u => u !== target);
+                removeUnit(target);
               }
             }
           });
@@ -172,7 +165,6 @@ function updateGameState(deltaTime) {
       bullet.x += Math.cos(bullet.angle) * bullet.speed * deltaTime;
       bullet.y += Math.sin(bullet.angle) * bullet.speed * deltaTime;
       bullet.lifetime -= deltaTime;
-      // Обработка столкновений для ракет (аналогично обычным пулям)
       const potentialTargets = gameState.units.concat(gameState.buildings)
         .filter(obj => obj.owner !== bullet.shooter.owner && obj.health > 0);
       for (let obj of potentialTargets) {
@@ -181,28 +173,24 @@ function updateGameState(deltaTime) {
           obj.health -= bullet.damage;
           const splashTargets = getEnemiesInRange({ x: bullet.x, y: bullet.y }, bullet.splashRadius);
           splashTargets.forEach(target => {
-  if (target.owner !== bullet.shooter.owner && target !== obj && target.health > 0) {
-    target.health -= bullet.splashDamage;
-    if (target.health <= 0) {
-      // Немедленно удалить цель или установить health в 0, чтобы избежать дальнейших изменений
-      if (target instanceof Building) {
-        spawnParticles(target.x, target.y, "red");
-        gameState.buildings = gameState.buildings.filter(b => b !== target);
-        if (target === aiBase) { aiBase = null; }
-      } else if (target instanceof Unit) {
-        gameState.units = gameState.units.filter(u => u !== target);
-        selectedUnits = selectedUnits.filter(u => u !== target);
-      }
-    }
-  }
-});
-
+            if (target.owner !== bullet.shooter.owner && target !== obj && target.health > 0) {
+              target.health -= bullet.splashDamage;
+              if (target.health <= 0) {
+                if (target instanceof Building) {
+                  spawnParticles(target.x, target.y, "red");
+                  gameState.buildings = gameState.buildings.filter(b => b !== target);
+                  if (target === aiBase) { aiBase = null; }
+                } else if (target instanceof Unit) {
+                  removeUnit(target);
+                }
+              }
+            }
+          });
           bullet.alive = false;
           spawnParticles(bullet.x, bullet.y, "orange");
           if (obj.health <= 0) {
             if (obj instanceof Unit) {
-              gameState.units = gameState.units.filter(u => u !== obj);
-              selectedUnits = selectedUnits.filter(u => u !== obj);
+              removeUnit(obj);
             } else if (obj instanceof Building) {
               spawnParticles(obj.x, obj.y, "red");
               gameState.buildings = gameState.buildings.filter(b => b !== obj);
@@ -227,8 +215,7 @@ function updateGameState(deltaTime) {
           spawnParticles(bullet.x, bullet.y, "orange");
           if (unit.health <= 0) {
             spawnParticles(unit.x, unit.y, "red");
-            gameState.units = gameState.units.filter(u => u !== unit);
-            selectedUnits = selectedUnits.filter(u => u !== unit);
+            removeUnit(unit);
           }
           break;
         }
@@ -267,6 +254,7 @@ function updateGameState(deltaTime) {
   autoRepairDamagedObjects();
 }
 
+
 function gameLoop(time) {
   const deltaTime = (time - lastTime) / 1000;
   lastTime = time;
@@ -288,104 +276,6 @@ function getRandomTargetPoint(centerX, centerY, radius) {
   };
 }
 //Обработчики кликов
-canvas.addEventListener("click", e => {
-  clearBuildZones();
-  const pos = screenToWorld(e.clientX, e.clientY);
-  
-  const selectedRepairman = selectedUnits.find(u => u.type === "repairman");
-  if (selectedRepairman) {
-    const clickedResource = gameState.resources.find(r => Math.hypot(r.x - pos.x, r.y - pos.y) < 10);
-    if (clickedResource) return;
-    const clickedBuilding = gameState.buildings.find(b =>
-      b.owner === "player" &&
-      pos.x >= b.x - b.width / 2 && pos.x <= b.x + b.width / 2 &&
-      pos.y >= b.y - b.height / 2 && pos.y <= b.y + b.height / 2
-    );
-  }
-  
-  const clickedResource = gameState.resources.find(r => Math.hypot(r.x - pos.x, r.y - pos.y) < 10);
-  const clickedBuilding = gameState.buildings.find(b =>
-    b.owner === "player" &&
-    pos.x >= b.x - b.width / 2 && pos.x <= b.x + b.width / 2 &&
-    pos.y >= b.y - b.height / 2 && pos.y <= b.y + b.height / 2
-  );
-  
-  if (clickedBuilding) {
-    if (clickedBuilding.type === "warehouse") { hireWorkerForPlayer(clickedBuilding); return; }
-    if (clickedBuilding.type === "barracks") { hireFighterForPlayer(clickedBuilding); return; }
-    if (clickedBuilding.type === "barracks2") { hireAssaultForPlayer(clickedBuilding); return; }
-    if (clickedBuilding.type === "repairWorkshop") {
-      recallRepairmenFromWorkshop(clickedBuilding);
-      return;
-    }
-    if (clickedBuilding) {
-      if (clickedBuilding.type === "warehouse") { hireWorkerForPlayer(clickedBuilding); return; }
-      if (clickedBuilding.type === "barracks") { hireFighterForPlayer(clickedBuilding); return; }
-      if (clickedBuilding.type === "barracks2") { hireAssaultForPlayer(clickedBuilding); return; }
-      if (clickedBuilding.type === "barracks3") { hireEliteForPlayer(clickedBuilding); return; }
-      if (clickedBuilding.type === "repairWorkshop") {
-        recallRepairmanFromRepWorkshop(clickedBuilding);
-        return;
-      }
-      if (clickedBuilding.type === "base" || clickedBuilding.type === "base2" ||
-          clickedBuilding.type === "base3" || clickedBuilding.type === "beacon") { 
-        showBuildingMenu(clickedBuilding); 
-        return;
-      }
-    }
-    if (clickedBuilding.type === "base" || clickedBuilding.type === "base2" ||
-        clickedBuilding.type === "base3" || clickedBuilding.type === "beacon") { 
-      showBuildingMenu(clickedBuilding); 
-      return;
-    }
-  }
-  
-  if (clickedResource && selectedUnits.length > 0) {
-    selectedUnits.forEach(unit => {
-      if (unit.type === "worker") {
-        unit.commandQueue = [];
-        unit.commandQueue.push({ type: "gather", resource: clickedResource });
-      }
-    });
-    return;
-  }
-  
-  const unitRadius = 5;
-  const clickedUnit = gameState.units.find(u => u.owner === "player" && Math.hypot(u.x - pos.x, u.y - pos.y) < unitRadius);
-  
-  if (clickedUnit) {
-    selectedUnits = [clickedUnit];
-  } else if (selectedUnits.length > 0) {
-    // Вместо того чтобы направлять все юниты в одну точку (pos),
-    // вычисляем для каждого свою цель в области вокруг pos (радиус, например, 20)
-    selectedUnits.forEach(unit => {
-      unit.commandQueue = [];
-      if (unit.currentMovementAnimation) {
-        cancelAnimationFrame(unit.currentMovementAnimation);
-        unit.currentMovementAnimation = null;
-      }
-      const randomTarget = getRandomTargetPoint(pos.x, pos.y, 50);
-      unit.commandQueue.push({ type: "move", x: randomTarget.x, y: randomTarget.y });
-    });
-  }
-});
-
-canvas.addEventListener("dblclick", e => {
-  clearBuildZones();
-  const pos = screenToWorld(e.clientX, e.clientY);
-  const clickedBuilding = gameState.buildings.find(b =>
-    pos.x >= b.x - b.width / 2 && pos.x <= b.x + b.width / 2 &&
-    pos.y >= b.y - b.height / 2 && pos.y <= b.y + b.height / 2
-  );
-  if (clickedBuilding) return;
-  const unitRadius = 5;
-  const clickedUnit = gameState.units.find(u => u.owner === "player" && Math.hypot(u.x - pos.x, u.y - pos.y) < unitRadius);
-  if (clickedUnit) {
-    selectedUnits = gameState.units.filter(u => u.owner === "player" && u.type === clickedUnit.type);
-  } else {
-    startSelectionFrame(e);
-  }
-});
 
 function startSelectionFrame(initialEvent) {
   const startX = initialEvent.clientX, startY = initialEvent.clientY;
@@ -422,28 +312,6 @@ function startSelectionFrame(initialEvent) {
   document.addEventListener("mouseup", onMouseUp);
 }
 
-canvas.addEventListener("contextmenu", e => {
-  e.preventDefault();
-  clearBuildZones();
-  const pos = screenToWorld(e.clientX, e.clientY);
-  const unitRadius = 5;
-  let enemyTarget = gameState.units.find(u => u.owner !== "player" && Math.hypot(u.x - pos.x, u.y - pos.y) < unitRadius);
-  if (!enemyTarget) {
-    enemyTarget = gameState.buildings.find(b =>
-      b.owner !== "player" &&
-      pos.x >= b.x - b.width / 2 && pos.x <= b.x + b.width / 2 &&
-      pos.y >= b.y - b.height / 2 && pos.y <= b.y + b.height / 2
-    );
-  }
-  if (enemyTarget) {
-    selectedUnits.forEach(unit => {
-      unit.commandQueue = [];
-      unit.commandQueue.push({ type: "attack", target: enemyTarget });
-    });
-  } else {
-    selectedUnits = [];
-  }
-});
 // Меню строительства
 // Функция, возвращающая HTML-строку для пункта меню с учетом условий
 function getMenuItem(buildingType, label) {

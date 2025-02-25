@@ -1,19 +1,6 @@
-let gameLoopId;
-let isPaused = false;
-
-// Объявляем переменные виртуального мира заранее
-let worldWidth, worldHeight;
 
 // Инициализация Canvas и контекста
 const canvas = document.getElementById("gameCanvas");
-const ctx = canvas.getContext("2d");
-
-// Объект камеры и функции преобразования координат
-const camera = {
-  offsetX: 0,
-  offsetY: 0,
-  scale: 0.5  // Начальный масштаб – можно регулировать
-};
 
 function worldToScreen(x, y) {
   return { x: x * camera.scale + camera.offsetX, y: y * camera.scale + camera.offsetY };
@@ -21,159 +8,6 @@ function worldToScreen(x, y) {
 
 function screenToWorld(x, y) {
   return { x: (x - camera.offsetX) / camera.scale, y: (y - camera.offsetY) / camera.scale };
-}
-
-// Классы игровых объектов
-class Building {
-  constructor(type, owner, x, y) {
-    this.type = type;
-    this.owner = owner;
-    this.x = x;
-    this.y = y;
-    if (type === "warehouse") {
-      this.width = 10; this.height = 10;
-      this.workers = 0; this.health = 250; this.maxHealth = 250;
-    } else if (type === "barracks") {
-      this.width = 15; this.height = 15;
-      this.fighters = 0; this.health = 400; this.maxHealth = 400;
-    } else if (type === "barracks2") {
-      this.width = 25; this.height = 15;
-      // Для казармы2 будем использовать её для найма штурмовиков
-      this.fighters = 0; this.health = 550; this.maxHealth = 550;
-    } else if (type === "base") {
-      this.width = 20; this.height = 20;
-      this.health = 1000; this.maxHealth = 1000;
-    } else if (type === "base2") {
-      this.width = 25; this.height = 30;
-      this.health = 1200; this.maxHealth = 1200;
-    } else if (type === "turret") {
-      this.width = 12; this.height = 12;
-      this.health = 250; this.maxHealth = 250;
-      this.range = 250; this.fireRate = 150;
-      this.lastFireTime = 0; this.angle = 0;
-      this.target = null;
-    } else if (type === "turret2") {
-      this.width = 15; this.height = 17;
-      this.health = 350; this.maxHealth = 350;
-      this.range = 500; this.fireRate = 3000;
-      this.lastFireTime = 0; this.angle = 0;
-      this.target = null;
-    } else if (type === "beacon") {
-      this.width = 4; this.height = 17;
-      this.health = 250; this.maxHealth = 250;
-      this.buildZoneMultiplier = 2;
-    } else if (type === "repairWorkshop") {
-      this.width = 10; this.height = 10;
-      this.health = 300; this.maxHealth = 300;
-      this.capacity = 5;
-      this.repairman = 0;
-      this.controlRadius = 200;
-    }
-    // Новые типы зданий:
-    else if (type === "base3") {
-      this.width = 30; this.height = 30;
-      this.health = 1500; this.maxHealth = 1500;
-    } else if (type === "barracks3") {
-      this.width = 20; this.height = 15;
-      this.fighters = 0; this.health = 80; this.maxHealth = 80;
-    } else if (type === "wall") {
-      this.width = 40; this.height = 10;
-      this.health = 200; this.maxHealth = 200;
-    }
-  }
-}
-class Unit {
-  constructor(type, owner, x, y) {
-    this.type = type;
-    this.owner = owner;
-    this.x = x; this.y = y;
-    this.target = null;
-    this.commandQueue = [];
-    this.idleTimer = 0;
-    this.currentMovementAnimation = null;
-    this.angle = 0;
-    this.scale = 1;
-    this.hidden = false;
-    this.hiding = false;
-    this.inWorkshop = null;
-    this.maneuvering = false;
-    if (type === "worker") {
-      this.health = 50;
-      this.maxHealth = 50;
-    } else if (type === "fighter") {
-      this.health = 100;
-      this.maxHealth = 100;
-      this.range = 150;
-      this.fireRate = 100;
-      this.lastFireTime = 0;
-      this.orbitRadius = undefined;
-      this.orbitAngle = undefined;
-      this.engagementRadius = 500;
-    } else if (type === "repairman") {
-      this.health = 50;
-      this.maxHealth = 50;
-      this.engagementRadius = 500;
-      this.scale = 0.4;
-    }
-    else if (type === "assault") {
-  this.health = 200;
-  this.maxHealth = 200;
-  // Пулемётный режим:
-  this.machineGunRange = 100;          // Радиус действия пулемёта
-  this.machineGunFireRate = 200;         // Интервал стрельбы пулемётом (мс)
-  this.lastMachineGunFireTime = 0;
-  // Ракетный режим (аналог турели2):
-  this.rocketRange = 300;               // Радиус для ракетного выстрела
-  this.rocketCooldown = 3000;           // Кулдаун ракетного выстрела (мс)
-  this.lastRocketFireTime = performance.now();
-  this.engagementRadius = 500;
-  this.range = 300; // <-- Добавляем общее свойство range для определения дистанции атаки
-}
-
-    // Новый тип: элитный (лингкор)
-    else if (type === "elite") {
-      this.health = 350;
-      this.maxHealth = 350;
-      this.range = 300;
-      this.meleeRange = 100;   // Если враг ближе 100 единиц – использовать шрапнель
-      this.artilleryRange = 500;  // Если враг между 100 и 150 – использовать ракетный залп
-      this.laserRange = 300;   // Если враг дальше 150 – использовать лазерный выстрел
-      
-      this.lastMeleeAttack = 0;
-      this.lastArtilleryAttack = 0;
-      this.lastLaserAttack = 0;
-      this.meleeCooldown = 500;
-      this.artilleryCooldown = 3000;
-      this.laserCooldown = 8000;
-    }
-
-  }
-}
-class Resource {
-  constructor(type, x, y, amount, max) {
-    this.type = type;
-    this.x = x;
-    this.y = y;
-    this.amount = amount;
-    this.max = max;
-    this.depleted = false;
-    if (this.type === "gold") {
-      const shape = createGoldShape();
-      this.points = shape.points;
-      this.baseRadius = shape.baseRadius;
-      this.rotation = 0;
-      this.rotationSpeed = 0.2;
-    }
-  }
-}
-class Bullet {
-  constructor(x, y, angle, speed, shooter, target) {
-    this.x = x; this.y = y;
-    this.angle = angle; this.speed = speed;
-    this.shooter = shooter; this.target = target;
-    this.alive = true; this.damage = 10; this.lifetime = 1.5;
-    // Свойство color будет задаваться при создании, если нужно
-  }
 }
 
 // Обработчик загрузки страницы:
@@ -281,7 +115,21 @@ btnLoad.addEventListener("click", () => {
   try {
     const state = localStorage.getItem("savedGameState");
     if (state) {
-      Object.assign(gameState, JSON.parse(state));
+      let loadedState = JSON.parse(state);
+      // Убираем данные тумана из сохраненного состояния, чтобы не перезатирать их
+      delete loadedState.fogMap;
+      delete loadedState.persistentFogMap;
+      
+      Object.assign(gameState, loadedState);
+      
+      // Явно очищаем глобальные переменные тумана перед переинициализацией
+      fogMap = [];
+      persistentFogMap = [];
+      
+      // Переинициализируем туман полностью на основе текущих размеров и позиций
+      initFogOfWar();
+      updateFogOfWar();
+      
       alert("Игра загружена!");
     } else {
       alert("Нет сохраненных данных!");
@@ -292,16 +140,13 @@ btnLoad.addEventListener("click", () => {
   }
 });
 
+
 // Обработчик кнопки "Выйти" – перезагружаем страницу
 btnExit.addEventListener("click", () => {
   if (confirm("Вы действительно хотите выйти?")) {
     location.reload();
   }
 });
-
-
-
-
 // Функция создания звёздного слоя
 function createStarLayer(width, height, starCount, minSize, maxSize) {
   const offscreen = document.createElement("canvas");
@@ -1180,3 +1025,8 @@ function getMarkerPosition(offset, rect) {
     return { x: rect.x, y: rect.y + h - (pos - (2 * w + h)) };
   }
 }
+
+
+
+
+
