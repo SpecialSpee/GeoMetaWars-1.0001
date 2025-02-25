@@ -306,6 +306,7 @@ let initialPinchDistance = null;
 canvas.addEventListener("touchmove", e => {
   e.preventDefault();
   if (e.touches.length === 2) {
+    const rect = canvas.getBoundingClientRect(); // получаем позицию canvas
     const touch1 = e.touches[0];
     const touch2 = e.touches[1];
     const currentDistance = Math.hypot(touch2.clientX - touch1.clientX, touch2.clientY - touch1.clientY);
@@ -314,17 +315,16 @@ canvas.addEventListener("touchmove", e => {
     } else {
       const scaleFactor = currentDistance / initialPinchDistance;
       let newScale = camera.scale * scaleFactor;
-      // Ограничиваем зум сверху
       if (newScale > MAX_SCALE) newScale = MAX_SCALE;
-      // Вычисляем центр между двумя касаниями
-      const pinchCenterX = (touch1.clientX + touch2.clientX) / 2;
-      const pinchCenterY = (touch1.clientY + touch2.clientY) / 2;
+      // Вычисляем центр между касаниями относительно canvas
+      const pinchCenterX = ((touch1.clientX + touch2.clientX) / 2) - rect.left;
+      const pinchCenterY = ((touch1.clientY + touch2.clientY) / 2) - rect.top;
       setZoom(newScale, pinchCenterX, pinchCenterY);
-      // Обновляем начальное расстояние для следующего события
       initialPinchDistance = currentDistance;
     }
   }
 }, { passive: false });
+
 
 // Сброс переменной при окончании касания
 canvas.addEventListener("touchend", e => {
