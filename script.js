@@ -365,7 +365,7 @@ function renderFogOfWar() {
   }
   ctx.restore();
 }
-// Функция отрисовки постоянного тумана (показывает, что участок уже был открыт)
+// Функция отрисовки постоянного тумана (показывает, что участок уже был открыт ИМЕННО ТУТ МОЖНО ЕГО УБРАТЬ НА ВРЕМЯ)
 function renderPersistentFog() {
   ctx.save();
   const cellScreenSize = FOG_CELL_SIZE * camera.scale;
@@ -376,7 +376,7 @@ function renderPersistentFog() {
         const worldX = c * FOG_CELL_SIZE;
         const worldY = r * FOG_CELL_SIZE;
         const screenPos = worldToScreen(worldX, worldY);
-        ctx.fillStyle = "rgba(0,0,0,1)";
+        ctx.fillStyle = "rgba(0,0,0,0)";
         ctx.fillRect(screenPos.x, screenPos.y, cellScreenSize, cellScreenSize);
       } else if (fogMap[r][c] < 1) {
         // Если ячейка была открыта ранее, но сейчас не видна – слегка затемняем
@@ -930,48 +930,80 @@ function showSingleBuildZone(building, buildingType) {
 	
 	
 	if (buildingType === "wall") {
-    zone.addEventListener("mousedown", e => {
-      e.stopPropagation();
-      isWallDragging = true;
-      wallDragStart = { x: e.clientX, y: e.clientY };
-      currentWallDragZone = zone;
-    });
-    zone.addEventListener("mousemove", e => {
-      // Можно добавить визуальный индикатор (например, линию от начала перетаскивания до текущей позиции)
-      if (isWallDragging && currentWallDragZone) {
-        // Для простоты выводим отладочную информацию в консоль
-        const dx = e.clientX - wallDragStart.x;
-        const dy = e.clientY - wallDragStart.y;
-        console.log("Перетаскивание стены: dx =", dx, "dy =", dy);
-      }
-    });
-    zone.addEventListener("mouseup", e => {
-      if (!isWallDragging) return;
-      const dragEnd = { x: e.clientX, y: e.clientY };
-      const dx = dragEnd.x - wallDragStart.x;
-      const dy = dragEnd.y - wallDragStart.y;
-      // Вычисляем угол в радианах
-      let angle = Math.atan2(dy, dx);
-      if (angle < 0) angle += 2 * Math.PI;
-      // Округляем до ближайшего кратного 90° (π/2)
-      angle = Math.round(angle / (Math.PI / 2)) * (Math.PI / 2);
-      // Определяем позицию строительства по точке отпускания мыши
-      const worldPos = screenToWorld(e.clientX, e.clientY);
-      console.log("Стена будет построена с ориентацией:", angle * 180 / Math.PI, "°");
-      // Вызываем функцию установки стены с указанной ориентацией
-      placeBuildingWithOrientation(worldPos.x, worldPos.y, buildingType, angle, "player");
-      clearBuildZones();
+  // Обработчик для начала касания (touchstart)
+  zone.addEventListener("touchstart", e => {
+    e.stopPropagation();
+    e.preventDefault();
+    isWallDragging = true;
+    wallDragStart = getEventPosition(e);
+    currentWallDragZone = zone;
+  }, { passive: false });
+  
+  // Обработчик движения пальцев (touchmove)
+  zone.addEventListener("touchmove", e => {
+    e.stopPropagation();
+    e.preventDefault();
+    // Здесь можно, если нужно, обновлять визуальный индикатор перетаскивания
+    // или сохранять текущую позицию для расчёта смещения.
+  }, { passive: false });
+  
+  // Обработчик завершения касания (touchend)
+  zone.addEventListener("touchend", e => {
+    e.stopPropagation();
+    e.preventDefault();
+    if (!isWallDragging) return;
+    const touchPos = getEventPosition(e);
+    const dx = touchPos.x - wallDragStart.x;
+    const dy = touchPos.y - wallDragStart.y;
+    // Вычисляем угол перетаскивания
+    let angle = Math.atan2(dy, dx);
+    if (angle < 0) angle += 2 * Math.PI;
+    // Округляем до ближайшего кратного 90° (π/2)
+    angle = Math.round(angle / (Math.PI / 2)) * (Math.PI / 2);
+    // Переводим координаты касания в мировые
+    const worldPos = screenToWorld(touchPos.x, touchPos.y);
+    // Вызываем функцию установки стены с рассчитанным углом
+    placeBuildingWithOrientation(worldPos.x, worldPos.y, buildingType, angle, "player");
+    clearBuildZones();
+    isWallDragging = false;
+    currentWallDragZone = null;
+  }, { passive: false });
+  
+  // Также оставляем мышиные обработчики для ПК
+  zone.addEventListener("mousedown", e => {
+    e.stopPropagation();
+    isWallDragging = true;
+    wallDragStart = getEventPosition(e);
+    currentWallDragZone = zone;
+  });
+  zone.addEventListener("mousemove", e => {
+    if (isWallDragging && currentWallDragZone) {
+      const pos = getEventPosition(e);
+      console.log("Перетаскивание стены: dx =", pos.x - wallDragStart.x, "dy =", pos.y - wallDragStart.y);
+    }
+  });
+  zone.addEventListener("mouseup", e => {
+    if (!isWallDragging) return;
+    const pos = getEventPosition(e);
+    const dx = pos.x - wallDragStart.x;
+    const dy = pos.y - wallDragStart.y;
+    let angle = Math.atan2(dy, dx);
+    if (angle < 0) angle += 2 * Math.PI;
+    angle = Math.round(angle / (Math.PI / 2)) * (Math.PI / 2);
+    const worldPos = screenToWorld(pos.x, pos.y);
+    placeBuildingWithOrientation(worldPos.x, worldPos.y, buildingType, angle, "player");
+    clearBuildZones();
+    isWallDragging = false;
+    currentWallDragZone = null;
+  });
+  zone.addEventListener("mouseleave", e => {
+    if (isWallDragging) {
       isWallDragging = false;
       currentWallDragZone = null;
-    });
-    // Если пользователь отходит с курсором за пределы зоны — сбрасываем перетаскивание
-    zone.addEventListener("mouseleave", e => {
-      if (isWallDragging) {
-        isWallDragging = false;
-        currentWallDragZone = null;
-      }
-    });
-  }
+    }
+  });
+}
+
 	
 	
   zone.addEventListener("click", e => {
