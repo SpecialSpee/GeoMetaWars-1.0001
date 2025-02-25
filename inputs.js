@@ -1,27 +1,15 @@
-// --------------------------
+// ---------------------------------------------
 // Переменные для перетаскивания стены
+// ---------------------------------------------
 let isWallDragging = false;
 let wallDragStart = { x: 0, y: 0 };
 let currentWallDragZone = null;
 
-// --------------------------
-// Переменные для перетаскивания карты
+// ---------------------------------------------
+// Обработчики перетаскивания карты (мышь)
+// ---------------------------------------------
 let isDragging = false, dragStart = { x: 0, y: 0 }, cameraStart = { offsetX: 0, offsetY: 0 };
 
-// Универсальная функция получения координат (mouse/touch)
-function getEventPosition(e) {
-  if (e.touches && e.touches.length > 0) {
-    return { x: e.touches[0].clientX, y: e.touches[0].clientY };
-  } else if (e.changedTouches && e.changedTouches.length > 0) {
-    return { x: e.changedTouches[0].clientX, y: e.changedTouches[0].clientY };
-  }
-  return { x: e.clientX, y: e.clientY };
-}
-
-// --------------------------
-// Обработчики перетаскивания карты
-
-// Mouse-события
 canvas.addEventListener("mousedown", e => {
   isDragging = true;
   dragStart = { x: e.clientX, y: e.clientY };
@@ -38,31 +26,36 @@ canvas.addEventListener("mousemove", e => {
 canvas.addEventListener("mouseup", () => { isDragging = false; });
 canvas.addEventListener("mouseleave", () => { isDragging = false; });
 
-// Touch-события для перетаскивания карты
+// ---------------------------------------------
+// Обработчики перетаскивания карты (touch)
+// ---------------------------------------------
 canvas.addEventListener("touchstart", e => {
+  // Обрабатываем только одиночное касание для перетаскивания
   if (e.touches.length === 1) {
-    e.preventDefault();
-    const pos = getEventPosition(e);
     isDragging = true;
-    dragStart = { x: pos.x, y: pos.y };
+    let touch = e.touches[0];
+    dragStart = { x: touch.clientX, y: touch.clientY };
     cameraStart = { offsetX: camera.offsetX, offsetY: camera.offsetY };
   }
 }, { passive: false });
+
 canvas.addEventListener("touchmove", e => {
-  if (e.touches.length === 1 && isDragging) {
-    e.preventDefault();
-    const pos = getEventPosition(e);
-    const dx = pos.x - dragStart.x;
-    const dy = pos.y - dragStart.y;
+  if (isDragging && e.touches.length === 1) {
+    let touch = e.touches[0];
+    const dx = touch.clientX - dragStart.x;
+    const dy = touch.clientY - dragStart.y;
     camera.offsetX = cameraStart.offsetX + dx;
     camera.offsetY = cameraStart.offsetY + dy;
   }
 }, { passive: false });
-canvas.addEventListener("touchend", () => { isDragging = false; }, { passive: false });
-canvas.addEventListener("touchcancel", () => { isDragging = false; }, { passive: false });
 
-// --------------------------
+canvas.addEventListener("touchend", e => { isDragging = false; }, { passive: false });
+canvas.addEventListener("touchcancel", e => { isDragging = false; }, { passive: false });
+
+// ---------------------------------------------
 // Функция, вызывающая ремонтников из мастерской по клику
+// (без изменений, так как вызывается программно)
+// ---------------------------------------------
 function recallRepairmenFromWorkshop(workshop) {
   const recalledRepairmen = gameState.units.filter(u =>
     u.owner === "player" &&
@@ -89,8 +82,9 @@ function recallRepairmenFromWorkshop(workshop) {
   }
 }
 
-// --------------------------
+// ---------------------------------------------
 // Функция найма ремонтника для игрока
+// ---------------------------------------------
 function hireRepairmanForPlayer(workshop) {
   if (workshop.repairman >= workshop.capacity) {
     showWarning("Максимум ремонтников для этой мастерской достигнут");
@@ -116,8 +110,9 @@ function hireRepairmanForPlayer(workshop) {
   });
 }
 
-// --------------------------
+// ---------------------------------------------
 // Новая функция для найма штурмовика из казармы2
+// ---------------------------------------------
 function hireAssaultForPlayer(barracks2) {
   const ASSAULT_COST = { 
     gold: FIGHTER_COST.gold * 1.5, 
@@ -142,8 +137,9 @@ function hireAssaultForPlayer(barracks2) {
   moveUnit(assault, target.x, target.y, () => startFighterCycle(assault));
 }
 
-// --------------------------
-// Функция для отправки команды атаки
+// ---------------------------------------------
+// Команда атаки для юнитов
+// ---------------------------------------------
 function commandUnitsToAttack(owner, target) {
   gameState.units.forEach(u => {
     if (u.owner === owner && u.type === "fighter") {
@@ -152,8 +148,9 @@ function commandUnitsToAttack(owner, target) {
   });
 }
 
-// --------------------------
-// Функция подсчёта недостающих турелей
+// ---------------------------------------------
+// Функции подсчёта, проверки и удаления (без изменений)
+// ---------------------------------------------
 function countMissingTurrets() {
   let missing = 0;
   gameState.buildings.forEach(b => {
@@ -176,13 +173,17 @@ function armySize(owner, unitType) {
 
 function enemyNear(building, radius) {
   let enemyFound = false;
-  gameState.units.forEach(u => { if (u.owner !== building.owner && Math.hypot(u.x - building.x, u.y - building.y) < radius) enemyFound = true; });
-  gameState.buildings.forEach(b => { if (b.owner !== building.owner && Math.hypot(b.x - building.x, b.y - building.y) < radius) enemyFound = true; });
+  gameState.units.forEach(u => { 
+    if (u.owner !== building.owner && Math.hypot(u.x - building.x, u.y - building.y) < radius)
+      enemyFound = true; 
+  });
+  gameState.buildings.forEach(b => { 
+    if (b.owner !== building.owner && Math.hypot(b.x - building.x, b.y - building.y) < radius)
+      enemyFound = true; 
+  });
   return enemyFound;
 }
 
-// --------------------------
-// Вспомогательная функция удаления юнита
 function removeUnit(unit) {
   if (unit.type === "worker" && unit.homeWarehouse) {
     unit.homeWarehouse.workers = Math.max(0, unit.homeWarehouse.workers - 1);
@@ -194,16 +195,140 @@ function removeUnit(unit) {
   selectedUnits = selectedUnits.filter(u => u !== unit);
 }
 
-// --------------------------
-// Функция обновления игрового состояния (без изменений)
+// Остальная логика (updateGameState, gameLoop, getRandomTargetPoint, обработчики кликов мыши)
+// остается без изменений – добавлены отдельные обработчики для touch ниже...
+
+
 function updateGameState(deltaTime) {
   updateUnits(deltaTime);
   updateResources(deltaTime);
-  // ... обработка пуль, частиц, обновление UI и т.д.
+  
+  gameState.bullets.forEach(bullet => {
+    if (bullet.isArtillery) {
+      bullet.x += Math.cos(bullet.angle) * bullet.speed * deltaTime;
+      bullet.y += Math.sin(bullet.angle) * bullet.speed * deltaTime;
+      bullet.lifetime -= deltaTime;
+      const potentialTargets = gameState.units.concat(gameState.buildings)
+        .filter(obj => obj.owner !== bullet.shooter.owner && obj.health > 0);
+      for (let obj of potentialTargets) {
+        let collisionThreshold = (obj instanceof Building) ? obj.width / 2 : 8;
+        if (Math.hypot(bullet.x - obj.x, bullet.y - obj.y) < collisionThreshold) {
+          const splashTargets = getEnemiesInRange({ x: bullet.x, y: bullet.y }, bullet.splashRadius);
+          splashTargets.forEach(target => {
+            target.health -= bullet.splashDamage;
+            if (target.health <= 0) {
+              if (target instanceof Building) {
+                spawnParticles(target.x, target.y, "green");
+                gameState.buildings = gameState.buildings.filter(b => b !== target);
+                if (target === aiBase) { aiBase = null; }
+              } else if (target instanceof Unit) {
+                removeUnit(target);
+              }
+            }
+          });
+          bullet.alive = false;
+          spawnParticles(bullet.x, bullet.y, "green");
+          break;
+        }
+      }
+    } else if (bullet.isMissile) {
+      if (bullet.target && bullet.target.health > 0) {
+        const desiredAngle = Math.atan2(bullet.target.y - bullet.y, bullet.target.x - bullet.x);
+        bullet.angle = lerpAngle(bullet.angle, desiredAngle, 0.05);
+      }
+      bullet.x += Math.cos(bullet.angle) * bullet.speed * deltaTime;
+      bullet.y += Math.sin(bullet.angle) * bullet.speed * deltaTime;
+      bullet.lifetime -= deltaTime;
+      const potentialTargets = gameState.units.concat(gameState.buildings)
+        .filter(obj => obj.owner !== bullet.shooter.owner && obj.health > 0);
+      for (let obj of potentialTargets) {
+        let collisionThreshold = (obj instanceof Building) ? obj.width / 2 : 8;
+        if (Math.hypot(bullet.x - obj.x, bullet.y - obj.y) < collisionThreshold) {
+          obj.health -= bullet.damage;
+          const splashTargets = getEnemiesInRange({ x: bullet.x, y: bullet.y }, bullet.splashRadius);
+          splashTargets.forEach(target => {
+            if (target.owner !== bullet.shooter.owner && target !== obj && target.health > 0) {
+              target.health -= bullet.splashDamage;
+              if (target.health <= 0) {
+                if (target instanceof Building) {
+                  spawnParticles(target.x, target.y, "red");
+                  gameState.buildings = gameState.buildings.filter(b => b !== target);
+                  if (target === aiBase) { aiBase = null; }
+                } else if (target instanceof Unit) {
+                  removeUnit(target);
+                }
+              }
+            }
+          });
+          bullet.alive = false;
+          spawnParticles(bullet.x, bullet.y, "orange");
+          if (obj.health <= 0) {
+            if (obj instanceof Unit) {
+              removeUnit(obj);
+            } else if (obj instanceof Building) {
+              spawnParticles(obj.x, obj.y, "red");
+              gameState.buildings = gameState.buildings.filter(b => b !== obj);
+              if (obj === aiBase) { aiBase = null; }
+            }
+          }
+          break;
+        }
+      }
+    } else {
+      bullet.x += Math.cos(bullet.angle) * bullet.speed * deltaTime;
+      bullet.y += Math.sin(bullet.angle) * bullet.speed * deltaTime;
+      bullet.lifetime -= deltaTime;
+      if (bullet.lifetime <= 0) bullet.alive = false;
+      const enemyUnits = gameState.units.filter(u => u.owner !== bullet.shooter.owner && u.health > 0);
+      for (let unit of enemyUnits) {
+        const d = Math.hypot(bullet.x - unit.x, bullet.y - unit.y);
+        if (d < 8) {
+          bullet.alive = false;
+          unit.health -= bullet.damage;
+          if (unit.health < 0) unit.health = 0;
+          spawnParticles(bullet.x, bullet.y, "orange");
+          if (unit.health <= 0) {
+            spawnParticles(unit.x, unit.y, "red");
+            removeUnit(unit);
+          }
+          break;
+        }
+      }
+      const enemyBuildings = gameState.buildings.filter(b => b.owner !== bullet.shooter.owner && b.health > 0);
+      for (let building of enemyBuildings) {
+        const d = Math.hypot(bullet.x - building.x, bullet.y - building.y);
+        if (d < building.width / 2) {
+          bullet.alive = false;
+          building.health -= bullet.damage;
+          if (building.health < 0) building.health = 0;
+          spawnParticles(bullet.x, bullet.y, "orange");
+          if (building.health <= 0) {
+            spawnParticles(building.x, building.y, "red");
+            gameState.buildings = gameState.buildings.filter(b => b !== building);
+            if (building === aiBase) { aiBase = null; }
+          }
+          break;
+        }
+      }
+    }
+  });
+  
+  gameState.bullets = gameState.bullets.filter(b => b.alive);
+  gameState.particles.forEach(p => {
+    p.x += p.vx * deltaTime;
+    p.y += p.vy * deltaTime;
+    p.life -= deltaTime;
+  });
+  gameState.particles = gameState.particles.filter(p => p.life > 0);
+  updateResourceUI();
+  processResourceDepletion();
+  updateBaseNavButton();
+  updateBase2NavButton();
+  updateBase3NavButton();
+  autoRepairDamagedObjects();
 }
 
-// --------------------------
-// Основной игровой цикл
+
 function gameLoop(time) {
   const deltaTime = (time - lastTime) / 1000;
   lastTime = time;
@@ -215,7 +340,7 @@ function gameLoop(time) {
   renderPersistentFog();
   gameLoopId = requestAnimationFrame(gameLoop);
 }
-
+// Сначала определим утилитную функцию для генерации случайной точки в круге:
 function getRandomTargetPoint(centerX, centerY, radius) {
   const angle = Math.random() * 2 * Math.PI;
   const r = Math.random() * radius;
@@ -224,30 +349,27 @@ function getRandomTargetPoint(centerX, centerY, radius) {
     y: centerY + r * Math.sin(angle)
   };
 }
-
-// --------------------------
-// Обработчики кликов и тач-событий на canvas
-
-// Функция обработки клика (универсальная для mouse и touch)
-function processCanvasClick(pos) {
+//Обработчики кликов
+canvas.addEventListener("click", e => {
   clearBuildZones();
-  const worldPos = screenToWorld(pos.x, pos.y);
+  const pos = screenToWorld(e.clientX, e.clientY);
+  
   const selectedRepairman = selectedUnits.find(u => u.type === "repairman");
   if (selectedRepairman) {
-    const clickedResource = gameState.resources.find(r => Math.hypot(r.x - worldPos.x, r.y - worldPos.y) < 10);
+    const clickedResource = gameState.resources.find(r => Math.hypot(r.x - pos.x, r.y - pos.y) < 10);
     if (clickedResource) return;
     const clickedBuilding = gameState.buildings.find(b =>
       b.owner === "player" &&
-      worldPos.x >= b.x - b.width / 2 && worldPos.x <= b.x + b.width / 2 &&
-      worldPos.y >= b.y - b.height / 2 && worldPos.y <= b.y + b.height / 2
+      pos.x >= b.x - b.width / 2 && pos.x <= b.x + b.width / 2 &&
+      pos.y >= b.y - b.height / 2 && pos.y <= b.y + b.height / 2
     );
   }
   
-  const clickedResource = gameState.resources.find(r => Math.hypot(r.x - worldPos.x, r.y - worldPos.y) < 10);
+  const clickedResource = gameState.resources.find(r => Math.hypot(r.x - pos.x, r.y - pos.y) < 10);
   const clickedBuilding = gameState.buildings.find(b =>
     b.owner === "player" &&
-    worldPos.x >= b.x - b.width / 2 && worldPos.x <= b.x + b.width / 2 &&
-    worldPos.y >= b.y - b.height / 2 && worldPos.y <= b.y + b.height / 2
+    pos.x >= b.x - b.width / 2 && pos.x <= b.x + b.width / 2 &&
+    pos.y >= b.y - b.height / 2 && pos.y <= b.y + b.height / 2
   );
   
   if (clickedBuilding) {
@@ -258,7 +380,21 @@ function processCanvasClick(pos) {
       recallRepairmenFromWorkshop(clickedBuilding);
       return;
     }
-    if (clickedBuilding.type === "barracks3") { hireEliteForPlayer(clickedBuilding); return; }
+    if (clickedBuilding) {
+      if (clickedBuilding.type === "warehouse") { hireWorkerForPlayer(clickedBuilding); return; }
+      if (clickedBuilding.type === "barracks") { hireFighterForPlayer(clickedBuilding); return; }
+      if (clickedBuilding.type === "barracks2") { hireAssaultForPlayer(clickedBuilding); return; }
+      if (clickedBuilding.type === "barracks3") { hireEliteForPlayer(clickedBuilding); return; }
+      if (clickedBuilding.type === "repairWorkshop") {
+        recallRepairmanFromRepWorkshop(clickedBuilding);
+        return;
+      }
+      if (clickedBuilding.type === "base" || clickedBuilding.type === "base2" ||
+          clickedBuilding.type === "base3" || clickedBuilding.type === "beacon") { 
+        showBuildingMenu(clickedBuilding); 
+        return;
+      }
+    }
     if (clickedBuilding.type === "base" || clickedBuilding.type === "base2" ||
         clickedBuilding.type === "base3" || clickedBuilding.type === "beacon") { 
       showBuildingMenu(clickedBuilding); 
@@ -277,36 +413,25 @@ function processCanvasClick(pos) {
   }
   
   const unitRadius = 5;
-  const clickedUnit = gameState.units.find(u => u.owner === "player" && Math.hypot(u.x - worldPos.x, u.y - worldPos.y) < unitRadius);
+  const clickedUnit = gameState.units.find(u => u.owner === "player" && Math.hypot(u.x - pos.x, u.y - pos.y) < unitRadius);
+  
   if (clickedUnit) {
     selectedUnits = [clickedUnit];
   } else if (selectedUnits.length > 0) {
+    // Вместо того чтобы направлять все юниты в одну точку (pos),
+    // вычисляем для каждого свою цель в области вокруг pos (радиус, например, 20)
     selectedUnits.forEach(unit => {
       unit.commandQueue = [];
       if (unit.currentMovementAnimation) {
         cancelAnimationFrame(unit.currentMovementAnimation);
         unit.currentMovementAnimation = null;
       }
-      const randomTarget = getRandomTargetPoint(worldPos.x, worldPos.y, 50);
+      const randomTarget = getRandomTargetPoint(pos.x, pos.y, 50);
       unit.commandQueue.push({ type: "move", x: randomTarget.x, y: randomTarget.y });
     });
   }
-}
-
-// Mouse click
-canvas.addEventListener("click", e => {
-  processCanvasClick({ x: e.clientX, y: e.clientY });
 });
-// Touch click (эмулируем клик по окончании касания)
-canvas.addEventListener("touchend", e => {
-  if (e.changedTouches.length === 1) {
-    const pos = { x: e.changedTouches[0].clientX, y: e.changedTouches[0].clientY };
-    processCanvasClick(pos);
-  }
-}, { passive: false });
 
-// --------------------------
-// Обработчик dblclick и выбор рамки (оставляем без изменений)
 canvas.addEventListener("dblclick", e => {
   clearBuildZones();
   const pos = screenToWorld(e.clientX, e.clientY);
