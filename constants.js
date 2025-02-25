@@ -300,9 +300,13 @@ let currentWallDragZone = null;
 
 // Обработчики перетаскивания карты
 // Универсальная функция для получения координат события (mouse/touch)
+// Универсальная функция для получения координат события (mouse/touch)
 function getEventPosition(e) {
+  // Для touchend используем changedTouches, если touches пустой
   if (e.touches && e.touches.length > 0) {
     return { x: e.touches[0].clientX, y: e.touches[0].clientY };
+  } else if (e.changedTouches && e.changedTouches.length > 0) {
+    return { x: e.changedTouches[0].clientX, y: e.changedTouches[0].clientY };
   }
   return { x: e.clientX, y: e.clientY };
 }
@@ -331,8 +335,9 @@ canvas.addEventListener("mousemove", e => {
 canvas.addEventListener("mouseup", () => { isDragging = false; });
 canvas.addEventListener("mouseleave", () => { isDragging = false; });
 
-// Touch
+// Touch-события
 canvas.addEventListener("touchstart", e => {
+  // Отменяем стандартное поведение (например, прокрутку)
   e.preventDefault();
   isDragging = true;
   dragStart = getEventPosition(e);
@@ -350,16 +355,18 @@ canvas.addEventListener("touchmove", e => {
 }, { passive: false });
 canvas.addEventListener("touchend", e => {
   e.preventDefault();
+  // Завершаем перетаскивание
   isDragging = false;
-  // Если касание не было перетаскиванием (движение минимально), вызываем обработчик клика
+  // Если движение было минимальным, обрабатываем как клик
   const pos = getEventPosition(e);
+  // Можно добавить проверку на минимальное смещение, если нужно
   handleClick(pos.x, pos.y);
 }, { passive: false });
 
 // --- Обработчики кликов ---
-// Общий обработчик клика для mouse и touch
+// Для мыши
 canvas.addEventListener("click", e => {
-  // Если не перетаскиваем (mouse click)
+  // Если мы не в процессе перетаскивания
   if (!isDragging) {
     const pos = getEventPosition(e);
     handleClick(pos.x, pos.y);
@@ -371,13 +378,16 @@ canvas.addEventListener("dblclick", e => {
   clearBuildZones();
   const pos = screenToWorld(e.clientX, e.clientY);
   const clickedBuilding = gameState.buildings.find(b =>
-    pos.x >= b.x - b.width/2 && pos.x <= b.x + b.width/2 &&
-    pos.y >= b.y - b.height/2 && pos.y <= b.y + b.height/2
+    pos.x >= b.x - b.width / 2 &&
+    pos.x <= b.x + b.width / 2 &&
+    pos.y >= b.y - b.height / 2 &&
+    pos.y <= b.y + b.height / 2
   );
   if (clickedBuilding) return;
   const unitRadius = 5;
-  const clickedUnit = gameState.units.find(u => 
-    u.owner === "player" && Math.hypot(u.x - pos.x, u.y - pos.y) < unitRadius
+  const clickedUnit = gameState.units.find(u =>
+    u.owner === "player" &&
+    Math.hypot(u.x - pos.x, u.y - pos.y) < unitRadius
   );
   if (clickedUnit) {
     selectedUnits = gameState.units.filter(u => u.owner === "player" && u.type === clickedUnit.type);
@@ -392,14 +402,17 @@ canvas.addEventListener("contextmenu", e => {
   clearBuildZones();
   const pos = screenToWorld(e.clientX, e.clientY);
   const unitRadius = 5;
-  let enemyTarget = gameState.units.find(u => 
-    u.owner !== "player" && Math.hypot(u.x - pos.x, u.y - pos.y) < unitRadius
+  let enemyTarget = gameState.units.find(u =>
+    u.owner !== "player" &&
+    Math.hypot(u.x - pos.x, u.y - pos.y) < unitRadius
   );
   if (!enemyTarget) {
     enemyTarget = gameState.buildings.find(b =>
       b.owner !== "player" &&
-      pos.x >= b.x - b.width/2 && pos.x <= b.x + b.width/2 &&
-      pos.y >= b.y - b.height/2 && pos.y <= b.y + b.height/2
+      pos.x >= b.x - b.width / 2 &&
+      pos.x <= b.x + b.width / 2 &&
+      pos.y >= b.y - b.height / 2 &&
+      pos.y <= b.y + b.height / 2
     );
   }
   if (enemyTarget) {
@@ -424,8 +437,10 @@ function handleClick(clientX, clientY) {
     if (clickedResource) return;
     const clickedBuilding = gameState.buildings.find(b =>
       b.owner === "player" &&
-      pos.x >= b.x - b.width/2 && pos.x <= b.x + b.width/2 &&
-      pos.y >= b.y - b.height/2 && pos.y <= b.y + b.height/2
+      pos.x >= b.x - b.width / 2 &&
+      pos.x <= b.x + b.width / 2 &&
+      pos.y >= b.y - b.height / 2 &&
+      pos.y <= b.y + b.height / 2
     );
     // Дополнительная логика для ремонта (если нужна)
   }
@@ -433,8 +448,10 @@ function handleClick(clientX, clientY) {
   const clickedResource = gameState.resources.find(r => Math.hypot(r.x - pos.x, r.y - pos.y) < 10);
   const clickedBuilding = gameState.buildings.find(b =>
     b.owner === "player" &&
-    pos.x >= b.x - b.width/2 && pos.x <= b.x + b.width/2 &&
-    pos.y >= b.y - b.height/2 && pos.y <= b.y + b.height/2
+    pos.x >= b.x - b.width / 2 &&
+    pos.x <= b.x + b.width / 2 &&
+    pos.y >= b.y - b.height / 2 &&
+    pos.y <= b.y + b.height / 2
   );
   
   if (clickedBuilding) {
@@ -462,7 +479,8 @@ function handleClick(clientX, clientY) {
   
   const unitRadius = 5;
   const clickedUnit = gameState.units.find(u => 
-    u.owner === "player" && Math.hypot(u.x - pos.x, u.y - pos.y) < unitRadius
+    u.owner === "player" &&
+    Math.hypot(u.x - pos.x, u.y - pos.y) < unitRadius
   );
   
   if (clickedUnit) {
@@ -480,6 +498,7 @@ function handleClick(clientX, clientY) {
     });
   }
 }
+
 
 
 
