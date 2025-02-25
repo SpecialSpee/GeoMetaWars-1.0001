@@ -1,5 +1,65 @@
+// Универсальная функция для получения координат (поддерживает mouse и touch)
+function getEventPosition(e) {
+  if (e.touches && e.touches.length > 0) {
+    return { x: e.touches[0].clientX, y: e.touches[0].clientY };
+  } else if (e.changedTouches && e.changedTouches.length > 0) {
+    return { x: e.changedTouches[0].clientX, y: e.changedTouches[0].clientY };
+  }
+  return { x: e.clientX, y: e.clientY };
+}
 
+// Флаги для перетаскивания стены
+let isWallDragging = false;
+let wallDragStart = { x: 0, y: 0 };
+let currentWallDragZone = null;
 
+// Флаги для перетаскивания карты
+let isDragging = false, dragStart = { x: 0, y: 0 }, cameraStart = { offsetX: 0, offsetY: 0 };
+
+// --- Обработчики перетаскивания карты ---
+// Начало перетаскивания (Mouse & Touch)
+function startDrag(e) {
+  const pos = getEventPosition(e);
+  isDragging = true;
+  dragStart = { x: pos.x, y: pos.y };
+  cameraStart = { offsetX: camera.offsetX, offsetY: camera.offsetY };
+}
+// Продолжение перетаскивания
+function doDrag(e) {
+  if (!isDragging) return;
+  const pos = getEventPosition(e);
+  const dx = pos.x - dragStart.x;
+  const dy = pos.y - dragStart.y;
+  camera.offsetX = cameraStart.offsetX + dx;
+  camera.offsetY = cameraStart.offsetY + dy;
+}
+// Завершение перетаскивания
+function endDrag(e) {
+  isDragging = false;
+}
+
+// Добавляем mouse-события
+canvas.addEventListener("mousedown", startDrag);
+canvas.addEventListener("mousemove", doDrag);
+canvas.addEventListener("mouseup", endDrag);
+canvas.addEventListener("mouseleave", endDrag);
+// Добавляем touch-события для перетаскивания карты
+canvas.addEventListener("touchstart", e => {
+  e.preventDefault();
+  startDrag(e);
+}, { passive: false });
+canvas.addEventListener("touchmove", e => {
+  e.preventDefault();
+  doDrag(e);
+}, { passive: false });
+canvas.addEventListener("touchend", e => {
+  e.preventDefault();
+  endDrag(e);
+}, { passive: false });
+canvas.addEventListener("touchcancel", e => {
+  e.preventDefault();
+  endDrag(e);
+}, { passive: false });
 
 
 // Функция, вызывающая ремонтников из мастерской по клику
@@ -28,6 +88,7 @@ function recallRepairmenFromWorkshop(workshop) {
     hireRepairmanForPlayer(workshop);
   }
 }
+
 // Функция найма ремонтника для игрока
 function hireRepairmanForPlayer(workshop) {
   if (workshop.repairman >= workshop.capacity) {
@@ -53,6 +114,7 @@ function hireRepairmanForPlayer(workshop) {
     autoRepairDamagedObjects();
   });
 }
+
 // Новая функция для найма штурмовика из казармы2
 function hireAssaultForPlayer(barracks2) {
   const ASSAULT_COST = { 
@@ -254,7 +316,6 @@ function updateGameState(deltaTime) {
   autoRepairDamagedObjects();
 }
 
-
 function gameLoop(time) {
   const deltaTime = (time - lastTime) / 1000;
   lastTime = time;
@@ -266,7 +327,7 @@ function gameLoop(time) {
   renderPersistentFog();
   gameLoopId = requestAnimationFrame(gameLoop);
 }
-// Сначала определим утилитную функцию для генерации случайной точки в круге:
+
 function getRandomTargetPoint(centerX, centerY, radius) {
   const angle = Math.random() * 2 * Math.PI;
   const r = Math.random() * radius;
@@ -275,7 +336,105 @@ function getRandomTargetPoint(centerX, centerY, radius) {
     y: centerY + r * Math.sin(angle)
   };
 }
-//Обработчики кликов
+
+// --- Обработчики кликов ---
+// Для кликов добавляем поддержку мыши; если понадобится, можно добавить и touch-события аналогичным образом
+canvas.addEventListener("click", e => {
+  clearBuildZones();
+  const pos = screenToWorld(e.clientX, e.clientY);
+  
+  const selectedRepairman = selectedUnits.find(u => u.type === "repairman");
+  if (selectedRepairman) {
+    const clickedResource = gameState.resources.find(r => Math.hypot(r.x - pos.x, r.y - pos.y) < 10);
+    if (clickedResource) return;
+    const clickedBuilding = gameState.buildings.find(b =>
+      b.owner === "player" &&
+      pos.x >= b.x - b.width / 2 && pos.x <= b.x + b.width / 2 &&
+      pos.y >= b.y - b.height / 2 && pos.y <= b.y + b.height / 2
+    );
+  }
+  
+  const clickedResource = gameState.resources.find(r => Math.hypot(r.x - pos.x, r.y - pos.y) < 10);
+  const clickedBuilding = gameState.buildings.find(b =>
+    b.owner === "player" &&
+    pos.x >= b.x - b.width / 2 && pos.x <= b.x + b.width / 2 &&
+    pos.y >= b.y - b.height / 2 && pos.y <= b.y + b.height / 2
+  );
+  
+  if (clickedBuilding) {
+    if (clickedBuilding.type === "warehouse") { hireWorkerForPlayer(clickedBuilding); return; }
+    if (clickedBuilding.type === "barracks") { hireFighterForPlayer(clickedBuilding); return; }
+    if (clickedBuilding.type === "barracks2") { hireAssaultForPlayer(clickedBuilding); return; }
+    if (clickedBuilding.type === "repairWorkshop") {
+      recallRepairmenFromWorkshop(clickedBuilding);
+      return;
+    }
+    if (clickedBuilding) {
+      if (clickedBuilding.type === "warehouse") { hireWorkerForPlayer(clickedBuilding); return; }
+      if (clickedBuilding.type === "barracks") { hireFighterForPlayer(clickedBuilding); return; }
+      if (clickedBuilding.type === "barracks2") { hireAssaultForPlayer(clickedBuilding); return; }
+      if (clickedBuilding.type === "barracks3") { hireEliteForPlayer(clickedBuilding); return; }
+      if (clickedBuilding.type === "repairWorkshop") {
+        recallRepairmanFromRepWorkshop(clickedBuilding);
+        return;
+      }
+      if (clickedBuilding.type === "base" || clickedBuilding.type === "base2" ||
+          clickedBuilding.type === "base3" || clickedBuilding.type === "beacon") { 
+        showBuildingMenu(clickedBuilding); 
+        return;
+      }
+    }
+    if (clickedBuilding.type === "base" || clickedBuilding.type === "base2" ||
+        clickedBuilding.type === "base3" || clickedBuilding.type === "beacon") { 
+      showBuildingMenu(clickedBuilding); 
+      return;
+    }
+  }
+  
+  if (clickedResource && selectedUnits.length > 0) {
+    selectedUnits.forEach(unit => {
+      if (unit.type === "worker") {
+        unit.commandQueue = [];
+        unit.commandQueue.push({ type: "gather", resource: clickedResource });
+      }
+    });
+    return;
+  }
+  
+  const unitRadius = 5;
+  const clickedUnit = gameState.units.find(u => u.owner === "player" && Math.hypot(u.x - pos.x, u.y - pos.y) < unitRadius);
+  
+  if (clickedUnit) {
+    selectedUnits = [clickedUnit];
+  } else if (selectedUnits.length > 0) {
+    selectedUnits.forEach(unit => {
+      unit.commandQueue = [];
+      if (unit.currentMovementAnimation) {
+        cancelAnimationFrame(unit.currentMovementAnimation);
+        unit.currentMovementAnimation = null;
+      }
+      const randomTarget = getRandomTargetPoint(pos.x, pos.y, 50);
+      unit.commandQueue.push({ type: "move", x: randomTarget.x, y: randomTarget.y });
+    });
+  }
+});
+
+canvas.addEventListener("dblclick", e => {
+  clearBuildZones();
+  const pos = screenToWorld(e.clientX, e.clientY);
+  const clickedBuilding = gameState.buildings.find(b =>
+    pos.x >= b.x - b.width / 2 && pos.x <= b.x + b.width / 2 &&
+    pos.y >= b.y - b.height / 2 && pos.y <= b.y + b.height / 2
+  );
+  if (clickedBuilding) return;
+  const unitRadius = 5;
+  const clickedUnit = gameState.units.find(u => u.owner === "player" && Math.hypot(u.x - pos.x, u.y - pos.y) < unitRadius);
+  if (clickedUnit) {
+    selectedUnits = gameState.units.filter(u => u.owner === "player" && u.type === clickedUnit.type);
+  } else {
+    startSelectionFrame(e);
+  }
+});
 
 function startSelectionFrame(initialEvent) {
   const startX = initialEvent.clientX, startY = initialEvent.clientY;
@@ -312,7 +471,30 @@ function startSelectionFrame(initialEvent) {
   document.addEventListener("mouseup", onMouseUp);
 }
 
-// Меню строительства
+canvas.addEventListener("contextmenu", e => {
+  e.preventDefault();
+  clearBuildZones();
+  const pos = screenToWorld(e.clientX, e.clientY);
+  const unitRadius = 5;
+  let enemyTarget = gameState.units.find(u => u.owner !== "player" && Math.hypot(u.x - pos.x, u.y - pos.y) < unitRadius);
+  if (!enemyTarget) {
+    enemyTarget = gameState.buildings.find(b =>
+      b.owner !== "player" &&
+      pos.x >= b.x - b.width / 2 && pos.x <= b.x + b.width / 2 &&
+      pos.y >= b.y - b.height / 2 && pos.y <= b.y + b.height / 2
+    );
+  }
+  if (enemyTarget) {
+    selectedUnits.forEach(unit => {
+      unit.commandQueue = [];
+      unit.commandQueue.push({ type: "attack", target: enemyTarget });
+    });
+  } else {
+    selectedUnits = [];
+  }
+});
+
+// --- Меню строительства ---
 // Функция, возвращающая HTML-строку для пункта меню с учетом условий
 function getMenuItem(buildingType, label) {
   let available = false;
@@ -331,12 +513,11 @@ function getMenuItem(buildingType, label) {
                  hasBuilding("repairWorkshop", "player") &&
                  !hasBuilding("turret", "player") &&
                  canAfford(TURRET_COST, "player"));
-	  
   } else if (buildingType === "wall") {
     available = (hasBuilding("warehouse", "player") &&
                  hasBuilding("barracks", "player") &&
                  hasBuilding("repairWorkshop", "player") &&
-				 !hasBuilding("wall", "player") &&
+                 !hasBuilding("wall", "player") &&
                  canAfford(WALL_COST, "player"));
   } else if (buildingType === "beacon") {
     available = (hasBuilding("warehouse", "player") &&
@@ -354,7 +535,7 @@ function getMenuItem(buildingType, label) {
 				 hasBuilding("base2", "player") &&
                  !hasBuilding("barracks2", "player") &&
                  canAfford(BARRACKS2_COST, "player"));
-	  }  else if (buildingType === "turret2") {
+  }  else if (buildingType === "turret2") {
     available = (hasBuilding("warehouse", "player") &&
                  hasBuilding("barracks", "player") &&
                  hasBuilding("turret", "player") &&
@@ -372,7 +553,6 @@ function getMenuItem(buildingType, label) {
                  hasBuilding("repairWorkshop", "player") &&
                  hasBuilding("beacon", "player") &&
                  canAfford(BASE2_COST, "player"));
-  
   } else if (buildingType === "base3") {
     available = (hasBuilding("warehouse", "player") &&
                  hasBuilding("barracks", "player") &&
@@ -396,12 +576,12 @@ function getMenuItem(buildingType, label) {
                  hasBuilding("base3", "player") &&
 				 !hasBuilding("barracks3", "player") &&
                  canAfford(BARRACKS3_COST, "player"));
-  } 
+  }
   
-  // Если все условия выполнены, добавляем inline-стиль для зеленого цвета
   return `<div data-type="${buildingType}" ${available ? 'style="color:green;"' : ''}>${label}</div>`;
 }
-//ТУТ НАСТРАИВАЕТСЯ ПОСЛЕДОВАТЕЛЬНОСТЬ ПОСТРОЙКИ 
+
+// Настройка последовательности построек (меню строительства)
 function showBuildingMenu(building) {
   clearBuildZones();
   let existing = document.getElementById("buildMenu");
@@ -411,7 +591,6 @@ function showBuildingMenu(building) {
   const screenPos = worldToScreen(building.x, building.y);
   menu.style.top = (screenPos.y + building.height * camera.scale / 2 + 5) + "px";
   menu.style.left = (screenPos.x - 50) + "px";
-  // Формируем меню с учетом базовых построек
   let menuHTML = getMenuItem("warehouse", "Склад") +
                  getMenuItem("repairWorkshop", "Мастерская");
   if (hasBuilding("warehouse", "player") && hasBuilding("repairWorkshop", "player")) {
@@ -419,39 +598,33 @@ function showBuildingMenu(building) {
   }
   if (hasBuilding("warehouse", "player") && hasBuilding("barracks", "player") && hasBuilding("repairWorkshop", "player")) {
     menuHTML += getMenuItem("turret", "Турель") +
-				getMenuItem("wall", "Стена");
+                getMenuItem("wall", "Стена");
   }
   if (hasBuilding("warehouse", "player") && hasBuilding("barracks", "player") &&
       hasBuilding("turret", "player") && hasBuilding("repairWorkshop", "player")) {
     menuHTML += getMenuItem("beacon", "Маяк");
   }
-  
-  // Продвинутые постройки
-if (!hasBuilding("base2", "player") &&
-    hasBuilding("warehouse", "player") &&
-    hasBuilding("barracks", "player") &&
-    hasBuilding("turret", "player") &&
-    hasBuilding("repairWorkshop", "player") &&
-    hasBuilding("beacon", "player")) {
-  menuHTML += getMenuItem("base2", "База2");
-} else if (hasBuilding("base2", "player")) {
-  if (!hasBuilding("barracks2", "player")) {
-    menuHTML += getMenuItem("barracks2", "Казарма2");
+  if (!hasBuilding("base2", "player") &&
+      hasBuilding("warehouse", "player") &&
+      hasBuilding("barracks", "player") &&
+      hasBuilding("turret", "player") &&
+      hasBuilding("repairWorkshop", "player") &&
+      hasBuilding("beacon", "player")) {
+    menuHTML += getMenuItem("base2", "База2");
+  } else if (hasBuilding("base2", "player")) {
+    if (!hasBuilding("barracks2", "player")) {
+      menuHTML += getMenuItem("barracks2", "Казарма2");
+    }
+    if (hasBuilding("barracks2", "player") && !hasBuilding("turret2", "player")) {
+      menuHTML += getMenuItem("turret2", "Турель2");
+    }
+    if (hasBuilding("base2", "player") && hasBuilding("barracks2", "player") && hasBuilding("turret2", "player") && !hasBuilding("base3", "player")) {
+      menuHTML += getMenuItem("base3", "База3");
+    }
+    if (hasBuilding("base3", "player") && !hasBuilding("barracks3", "player")) {
+      menuHTML += getMenuItem("barracks3", "Казарма3");
+    }
   }
-  if (hasBuilding("barracks2", "player") && !hasBuilding("turret2", "player")) {
-    menuHTML += getMenuItem("turret2", "Турель2");
-  }
-  // База3 появляется только после того, как построены база2, казарма2 и турель2
-  if (hasBuilding("base2", "player") && hasBuilding("barracks2", "player") && hasBuilding("turret2", "player") && !hasBuilding("base3", "player")) {
-    menuHTML += getMenuItem("base3", "База3");
-  }
-  // Казарма3 появляется только после базы3
-  if (hasBuilding("base3", "player") && !hasBuilding("barracks3", "player")) {
-    menuHTML += getMenuItem("barracks3", "Казарма3");
-  }
-}
-
-  
   menu.innerHTML = menuHTML;
   menu.querySelectorAll("div").forEach(item => {
     item.addEventListener("click", e => {
@@ -465,12 +638,12 @@ if (!hasBuilding("base2", "player") &&
 
 function clearBuildZones() {
   document.querySelectorAll(".buildZone").forEach(zone => zone.remove());
-  const menu = document.getElementById("buildMenu");
-  if (menu) menu.remove();
+  const buildMenu = document.getElementById("buildMenu");
+  if (buildMenu) buildMenu.remove();
 }
 
+// Функция установки стены с ориентацией
 function placeBuildingWithOrientation(x, y, buildingType, angle, owner) {
-  // Проверка ресурсов и пересечения аналогична функции placeBuilding
   if (owner === "player" && buildingType === "wall") {
     if (gameState.playerResources.gold < WALL_COST.gold ||
         gameState.playerResources.silicon < WALL_COST.silicon ||
@@ -484,11 +657,12 @@ function placeBuildingWithOrientation(x, y, buildingType, angle, owner) {
   }
   updateResourceUI();
   const building = new Building(buildingType, owner, x, y);
-  building.angle = angle; // сохраняем ориентацию
+  building.angle = angle;
   gameState.buildings.push(building);
   console.log(`Стена построена с углом ${angle * 180 / Math.PI}°`);
 }
-//ЛОГИКА КЛИКОВ В МЕНЮ ПОСТРОЙКИ
+
+// Логика кликов в меню строительства
 function showSingleBuildZone(building, buildingType) {
   const zone = document.createElement("div");
   zone.className = "buildZone";
@@ -513,7 +687,7 @@ function showSingleBuildZone(building, buildingType) {
   });
   
   if (buildingType === "wall") {
-    // Для стены обрабатываем перетаскивание для установки ориентации
+    // Для стены добавляем обработчики перетаскивания с поддержкой mouse и touch
     zone.addEventListener("mousedown", e => {
       e.preventDefault();
       e.stopPropagation();
@@ -532,12 +706,10 @@ function showSingleBuildZone(building, buildingType) {
       e.preventDefault();
       e.stopPropagation();
       if (!isWallDragging) return;
-      const dragEnd = { x: e.clientX, y: e.clientY };
-      const dx = dragEnd.x - wallDragStart.x;
-      const dy = dragEnd.y - wallDragStart.y;
+      const dx = e.clientX - wallDragStart.x;
+      const dy = e.clientY - wallDragStart.y;
       let angle = Math.atan2(dy, dx);
       if (angle < 0) angle += 2 * Math.PI;
-      // Округляем до ближайшего кратного 90° (π/2)
       angle = Math.round(angle / (Math.PI / 2)) * (Math.PI / 2);
       const worldPos = screenToWorld(e.clientX, e.clientY);
       console.log("Стена будет построена с ориентацией:", angle * 180 / Math.PI, "°");
@@ -552,12 +724,52 @@ function showSingleBuildZone(building, buildingType) {
         currentWallDragZone = null;
       }
     });
+    // Touch-обработчики для стены
+    zone.addEventListener("touchstart", e => {
+      e.preventDefault();
+      e.stopPropagation();
+      const pos = getEventPosition(e);
+      isWallDragging = true;
+      wallDragStart = { x: pos.x, y: pos.y };
+      currentWallDragZone = zone;
+    }, { passive: false });
+    zone.addEventListener("touchmove", e => {
+      e.preventDefault();
+      if (isWallDragging && currentWallDragZone) {
+        const pos = getEventPosition(e);
+        const dx = pos.x - wallDragStart.x;
+        const dy = pos.y - wallDragStart.y;
+        console.log("Touch-перетаскивание стены: dx =", dx, "dy =", dy);
+      }
+    }, { passive: false });
+    zone.addEventListener("touchend", e => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (!isWallDragging) return;
+      const pos = getEventPosition(e);
+      const dx = pos.x - wallDragStart.x;
+      const dy = pos.y - wallDragStart.y;
+      let angle = Math.atan2(dy, dx);
+      if (angle < 0) angle += 2 * Math.PI;
+      angle = Math.round(angle / (Math.PI / 2)) * (Math.PI / 2);
+      const worldPos = screenToWorld(pos.x, pos.y);
+      console.log("Touch: Стена будет построена с ориентацией:", angle * 180 / Math.PI, "°");
+      placeBuildingWithOrientation(worldPos.x, worldPos.y, buildingType, angle, "player");
+      clearBuildZones();
+      isWallDragging = false;
+      currentWallDragZone = null;
+    }, { passive: false });
+    zone.addEventListener("touchcancel", e => {
+      e.preventDefault();
+      isWallDragging = false;
+      currentWallDragZone = null;
+    }, { passive: false });
   } else {
-    // Для остальных типов зданий — обычный обработчик клика
     zone.addEventListener("click", e => {
       e.preventDefault();
       e.stopPropagation();
-      const worldPos = screenToWorld(e.clientX, e.clientY);
+      const pos = getEventPosition(e);
+      const worldPos = screenToWorld(pos.x, pos.y);
       console.log("Клик по зоне, строим", buildingType, "в", worldPos);
       placeBuilding(worldPos.x, worldPos.y, buildingType, "player");
       clearBuildZones();

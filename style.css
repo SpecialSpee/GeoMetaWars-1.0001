@@ -23,7 +23,9 @@ html, body {
 
 #gameCanvas {
   cursor: crosshair;
+  touch-action: none;
 }
+
 
 #resourceCounters {
   position: fixed;

@@ -1,279 +1,3 @@
-function calculateWallPosition(base) {
-  // Выбираем случайный угол для размещения стены вокруг базы.
-  const angle = Math.random() * 2 * Math.PI;
-  // Определяем отступ: половина ширины базы плюс фиксированный отступ (например, 20 пикселей)
-  const offset = base.width / 2 + 20;
-  return {
-    x: base.x + offset * Math.cos(angle),
-    y: base.y + offset * Math.sin(angle)
-  };
-}
-
-function randomFarPosition(building, minDistance) {
-  // minDistance – минимальное расстояние от здания
-  const angle = Math.random() * Math.PI * 3;
-  // Можно задать, что случайное расстояние будет в диапазоне от minDistance до, например, 2*minDistance
-  const distance = minDistance + Math.random() * minDistance;
-  return { 
-    x: building.x + distance * Math.cos(angle), 
-    y: building.y + distance * Math.sin(angle) 
-  };
-}
-
-function countBuildings(buildingType, owner) {
-  return gameState.buildings.filter(b => b.owner === owner && b.type === buildingType).length;
-}
-
-function canAfford(cost, owner) {
-  if (owner === "ai") {
-    return gameState.aiResources.gold >= cost.gold &&
-           gameState.aiResources.silicon >= cost.silicon &&
-           gameState.aiResources.plasma >= cost.plasma;
-  } else if (owner === "player") {
-    return gameState.playerResources.gold >= cost.gold &&
-           gameState.playerResources.silicon >= cost.silicon &&
-           gameState.playerResources.plasma >= cost.plasma;
-  }
-  return false;
-}
-// Функция оценки плотности ресурсов в заданной области
-function evaluateResourceDensity(x, y, radius) {
-  let density = 0;
-  gameState.resources.forEach(resource => {
-    const d = Math.hypot(resource.x - x, resource.y - y);
-    if (d < radius) {
-      density += resource.amount; // можно добавить вес для разных типов ресурсов
-    }
-  });
-  return density;
-}
-
-function attemptToBuildWarehouse() {
-  if (countBuildings("warehouse", "ai") < DESIRED_WAREHOUSE_COUNT) {
-    const pos = findOptimalWarehousePosition();
-    if (pos && canAfford(WAREHOUSE_COST, "ai")) {
-      if (aiPlaceBuilding("warehouse", pos.x, pos.y)) {
-        console.log("AI построил склад в оптимальной позиции", pos);
-      }
-    }
-  }
-}
-
-function randomNearbyPosition(building, distance) {
-  const angle = Math.random() * Math.PI * 2;
-  return { x: building.x + distance * Math.cos(angle), y: building.y + distance * Math.sin(angle) };
-}
-
-function isPositionInBuildingZone(x, y) {
-  const zoneMargin = 20; // базовый отступ для зоны строительства
-  for (let b of gameState.buildings) {
-    // Для складов можно использовать меньший margin, если требуется
-    let currentMargin = zoneMargin;
-    if (b.type === "warehouse") {
-      currentMargin = 10;
-    }
-    const bRect = {
-      left: b.x - b.width / 2 - currentMargin,
-      top: b.y - b.height / 2 - currentMargin,
-      right: b.x + b.width / 2 + currentMargin,
-      bottom: b.y + b.height / 2 + currentMargin
-    };
-    if (x >= bRect.left && x <= bRect.right && y >= bRect.top && y <= bRect.bottom) {
-      return true;
-    }
-  }
-  return false;
-}
-
-function startRepairCycle(repairMan, workshop) {
-  console.log("Запущен цикл ремонта для ремонтника", repairMan, "из мастерской", workshop);
-  // Логика ремонта
-}
-
-function startRepairProcess(repairman, command) {
-  console.log("Запущен процесс ремонта для объекта", command.target, "ремонтником", repairman);
-  const repairRate = 5;
-  const intervalTime = 100;
-  const REPAIR_COST = { gold: 2, silicon: 5, plasma: 1 };
-  const intervalsPerSecond = 1000 / intervalTime;
-  const costGoldPerInterval = REPAIR_COST.gold / intervalsPerSecond;
-  const costSiliconPerInterval = REPAIR_COST.silicon / intervalsPerSecond;
-  const costPlasmaPerInterval = REPAIR_COST.plasma / intervalsPerSecond;
-  
-  const repairInterval = setInterval(() => {
-    const resources = command.target.owner === "player" ? gameState.playerResources : gameState.aiResources;
-    if (resources.gold < costGoldPerInterval || resources.silicon < costSiliconPerInterval || resources.plasma < costPlasmaPerInterval) {
-      showWarning("Недостаточно ресурсов для ремонта");
-      clearInterval(repairInterval);
-      command.target.isRepairing = false;
-      processCommandQueue(repairman);
-      return;
-    }
-    resources.gold -= costGoldPerInterval;
-    resources.silicon -= costSiliconPerInterval;
-    resources.plasma -= costPlasmaPerInterval;
-    updateResourceUI();
-    
-    if (command.target.health >= command.target.maxHealth || command.target.health <= 0) {
-      console.log("Ремонт завершён для объекта", command.target);
-      clearInterval(repairInterval);
-      command.target.isRepairing = false;
-      processCommandQueue(repairman);
-      return;
-    }
-    command.target.health += (repairRate * intervalTime) / 1000;
-    if (command.target.health > command.target.maxHealth) {
-      command.target.health = command.target.maxHealth;
-    }
-  }, intervalTime);
-}
-// Универсальная функция запроса ремонта
-function requestRepair(target, workshop, repairman) {
-  // Если объект уже в процессе ремонта и прошло меньше 5 сек с последней попытки – ничего не делаем
-  if (target.isRepairing && target.repairAttemptedAt && performance.now() - target.repairAttemptedAt < 5000) return;
-  target.isRepairing = true;
-  target.repairAttemptedAt = performance.now();
-
-  const distance = Math.hypot(target.x - workshop.x, target.y - workshop.y);
-  if (distance > workshop.controlRadius) return;
-
-  // Если ремонтника не передали, ищем доступного
-  if (!repairman) {
-    // Используем let для временной переменной availableRepairmen, чтобы потом выбрать одного ремонтника
-    let availableRepairmen = gameState.units.filter(u => u.owner === target.owner && u.type === "repairman");
-    if (availableRepairmen.length > 0) {
-      availableRepairmen.sort((a, b) =>
-        Math.hypot(a.x - workshop.x, a.y - workshop.y) - Math.hypot(b.x - workshop.x, b.y - workshop.y)
-      );
-      repairman = availableRepairmen[0];
-    }
-  }
-  
-  // При желании можно вести подсчет количества ремонтов:
-  if (target.repairCount === undefined) {
-    target.repairCount = 0;
-  }
-  target.repairCount++;
-
-  if (repairman) {
-    repairman.commandQueue = [];
-    repairman.commandQueue.push({ type: "repair", target: target, workshop: workshop });
-    processCommandQueue(repairman);
-  } else {
-    showWarning("Нет доступных ремонтников для ремонта");
-  }
-}
-// Функция автоматического ремонта повреждённых объектов
-function autoRepairDamagedObjects() {
-  // Собираем все объекты, у которых health меньше maxHealth на значимую величину (например, 10% потерь)
-  const repairables = [].concat(
-    gameState.units.filter(u => u.health < u.maxHealth * 0.99),
-    gameState.buildings.filter(b => b.health < b.maxHealth * 0.99)
-  );
-  
-  repairables.forEach(target => {
-    // Если объект уже находится в ремонте и прошло более 1 сек с последней попытки – сбрасываем флаг
-    if (target.isRepairing && target.repairAttemptedAt && performance.now() - target.repairAttemptedAt > 1000) {
-      target.isRepairing = false;
-    }
-    if (target.isRepairing) return;
-    
-    // Находим мастерские для данного владельца
-    let workshops = gameState.buildings.filter(b => b.owner === target.owner && b.type === "repairWorkshop");
-    if (workshops.length === 0) return;
-    
-    // Сортируем мастерские по расстоянию до объекта
-    workshops.sort((a, b) =>
-      Math.hypot(target.x - a.x, target.y - a.y) - Math.hypot(target.x - b.x, target.y - b.y)
-    );
-    
-    const nearestWorkshop = workshops[0];
-    // Запускаем ремонт, только если объект находится в зоне контроля мастерской
-    if (Math.hypot(target.x - nearestWorkshop.x, target.y - nearestWorkshop.y) <= nearestWorkshop.controlRadius) {
-      requestRepair(target, nearestWorkshop);
-    }
-  });
-}
-// Функция, возвращающая прямоугольник зоны строительства для здания
-function getBuildZoneRect(building) {
-  // Если здание имеет buildZoneMultiplier (например, для маяка или базы), используем его, иначе — значение по умолчанию
-  const zoneMargin = building.buildZoneMultiplier || 20;
-  return {
-    left: building.x - building.width / 2 - zoneMargin,
-    top: building.y - building.height / 2 - zoneMargin,
-    right: building.x + building.width / 2 + zoneMargin,
-    bottom: building.y + building.height / 2 + zoneMargin
-  };
-}
-// Функция проверки, находится ли точка (x, y) в зоне строительства какого-либо здания
-function isInAnyBuildZone(x, y) {
-  for (let b of gameState.buildings) {
-    // Для складов можно использовать меньший отступ, если нужно
-    let currentMargin = (b.type === "warehouse") ? 10 : (b.buildZoneMultiplier || 20);
-    const bRect = {
-      left: b.x - b.width / 2 - currentMargin,
-      top: b.y - b.height / 2 - currentMargin,
-      right: b.x + b.width / 2 + currentMargin,
-      bottom: b.y + b.height / 2 + currentMargin
-    };
-    if (x >= bRect.left && x <= bRect.right && y >= bRect.top && y <= bRect.bottom) {
-      return true;
-    }
-  }
-  return false;
-}
-// Функция проверки, находится ли точка в пределах зоны союзных построек.
-// Здесь в качестве зоны используется радиус от каждой союзной постройки.
-function isWithinAlliedZone(x, y) {
-  const zoneRadius = 100; // можно настроить радиус зоны
-  // Считаем, что база ИИ тоже является союзной постройкой
-  if (Math.hypot(x - aiBase.x, y - aiBase.y) <= zoneRadius) {
-    return true;
-  }
-  // Проверяем остальные союзные здания
-  for (const building of gameState.buildings.filter(b => b.owner === "ai")) {
-    if (Math.hypot(x - building.x, y - building.y) <= zoneRadius) {
-      return true;
-    }
-  }
-  return false;
-}
-/* === Условие победы === */
-function checkVictoryConditions() {
-  if (!aiBase || aiBase.health <= 0) {
-    clearInterval(aiLogicInterval);
-    cancelAnimationFrame(gameLoop);
-    showVictoryMessage("Победа! База противника уничтожена.");
-    return;
-  }
-  if (!playerBase || playerBase.health <= 0) {
-    clearInterval(aiLogicInterval);
-    cancelAnimationFrame(gameLoop);
-    showVictoryMessage("Поражение! Ваша база уничтожена.");
-    return;
-  }
-}
-
-function showVictoryMessage(message) {
-  const victoryDiv = document.createElement("div");
-  victoryDiv.innerText = message;
-  victoryDiv.style.position = "fixed";
-  victoryDiv.style.top = "50%";
-  victoryDiv.style.left = "50%";
-  victoryDiv.style.transform = "translate(-50%, -50%)";
-  victoryDiv.style.fontSize = "48px";
-  victoryDiv.style.color = "yellow";
-  victoryDiv.style.backgroundColor = "rgba(0,0,0,0.8)";
-  victoryDiv.style.padding = "20px 40px";
-  victoryDiv.style.borderRadius = "10px";
-  victoryDiv.style.zIndex = "10000";
-  document.body.appendChild(victoryDiv);
-}
-
-function rectsOverlap(r1, r2) {
-  return !(r1.right <= r2.left || r1.left >= r2.right ||
-           r1.bottom <= r2.top || r1.top >= r2.bottom);
-}
 // Инициализация тумана войны с расширением persistentFogMap без полного сброса
 function initFogOfWar() {
   const cols = Math.ceil(worldWidth / FOG_CELL_SIZE);
@@ -313,6 +37,7 @@ function initFogOfWar() {
     persistentFogMap = persistentFogMap.slice(0, rows);
   }
 }
+
 // Функция обновления тумана войны (не изменена логика, но добавлена проверка)
 function updateFogOfWar() {
   if (!fogMap || fogMap.length === 0 || !fogMap[0]) return;
@@ -347,6 +72,7 @@ function updateFogOfWar() {
     }
   });
 }
+
 // Функция отрисовки динамичного тумана (на текущем участке)
 function renderFogOfWar() {
   ctx.save();
@@ -365,7 +91,8 @@ function renderFogOfWar() {
   }
   ctx.restore();
 }
-// Функция отрисовки постоянного тумана (показывает, что участок уже был открыт ИМЕННО ТУТ МОЖНО ЕГО УБРАТЬ НА ВРЕМЯ)
+
+// Функция отрисовки постоянного тумана (показывает, что участок уже был открыт)
 function renderPersistentFog() {
   ctx.save();
   const cellScreenSize = FOG_CELL_SIZE * camera.scale;
@@ -376,7 +103,7 @@ function renderPersistentFog() {
         const worldX = c * FOG_CELL_SIZE;
         const worldY = r * FOG_CELL_SIZE;
         const screenPos = worldToScreen(worldX, worldY);
-        ctx.fillStyle = "rgba(0,0,0,0)";
+        ctx.fillStyle = "rgba(0,0,0,1)";
         ctx.fillRect(screenPos.x, screenPos.y, cellScreenSize, cellScreenSize);
       } else if (fogMap[r][c] < 1) {
         // Если ячейка была открыта ранее, но сейчас не видна – слегка затемняем
@@ -391,6 +118,7 @@ function renderPersistentFog() {
   }
   ctx.restore();
 }
+
 // Функция отрисовки дополнительного динамичного тумана
 function renderDynamicFog() {
   ctx.save();
@@ -409,6 +137,7 @@ function renderDynamicFog() {
   }
   ctx.restore();
 }
+
 // Функция изменения размеров canvas и виртуального мира с сохранением текущего вида
 function resizeCanvas() {
   const oldWidth = canvas.width;
@@ -432,6 +161,7 @@ function resizeCanvas() {
   camera.offsetY += dy;
 }
 window.addEventListener("resize", resizeCanvas);
+
 resizeCanvas();
 /* === Спавн баз игрока и ИИ === */
 function getRandomBasePosition(margin) {
@@ -457,7 +187,7 @@ function getRandomBasePosition(margin) {
   }
   return { x, y };
 }
-
+const margin = 100;
 const playerPos = getRandomBasePosition(margin);
 const aiPos = getRandomBasePosition(margin);
 const playerBase = new Building("base", "player", playerPos.x, playerPos.y);
@@ -466,7 +196,7 @@ gameState.buildings.push(playerBase, aiBase);
 camera.offsetX = canvas.width / 2 - playerBase.x * camera.scale;
 camera.offsetY = canvas.height / 2 - playerBase.y * camera.scale;
 // Ограничение зума
-
+const MAX_SCALE = 2;
 function setZoom(newScale, zoomCenterX, zoomCenterY) {
   if (newScale > MAX_SCALE) { newScale = MAX_SCALE; }
   const worldPoint = screenToWorld(zoomCenterX, zoomCenterY);
@@ -498,7 +228,31 @@ function showWarning(message) {
   document.body.appendChild(warningDiv);
   setTimeout(() => warningDiv.remove(), 2000);
 }
-
+// Массив с путями к фоновым изображениям
+const backgroundImages = [
+  'src/images/background1.jpeg',
+  'src/images/background2.jpeg',
+  'src/images/background3.jpeg',
+  'src/images/background4.jpeg',
+  'src/images/background5.jpeg',
+	'src/images/background6.jpeg',
+	'src/images/background7.jpeg'
+];
+// Выбор случайного изображения из массива
+const randomIndex = Math.floor(Math.random() * backgroundImages.length);
+const selectedImage = backgroundImages[randomIndex];
+// Создание объекта изображения и установка источника
+const backgroundImage = new Image();
+backgroundImage.src = selectedImage;
+backgroundImage.onload = () => {
+  console.log('Фоновая картинка загружена:', selectedImage);
+  
+  // Пример установки фона для body
+  document.body.style.backgroundImage = `url(${selectedImage})`;
+  document.body.style.backgroundSize = 'cover';
+  document.body.style.backgroundPosition = 'center';
+	
+};
 
 function getBuilding(type, owner) {
   return gameState.buildings.find(b => b.type === type && b.owner === owner);
@@ -930,80 +684,48 @@ function showSingleBuildZone(building, buildingType) {
 	
 	
 	if (buildingType === "wall") {
-  // Обработчик для начала касания (touchstart)
-  zone.addEventListener("touchstart", e => {
-    e.stopPropagation();
-    e.preventDefault();
-    isWallDragging = true;
-    wallDragStart = getEventPosition(e);
-    currentWallDragZone = zone;
-  }, { passive: false });
-  
-  // Обработчик движения пальцев (touchmove)
-  zone.addEventListener("touchmove", e => {
-    e.stopPropagation();
-    e.preventDefault();
-    // Здесь можно, если нужно, обновлять визуальный индикатор перетаскивания
-    // или сохранять текущую позицию для расчёта смещения.
-  }, { passive: false });
-  
-  // Обработчик завершения касания (touchend)
-  zone.addEventListener("touchend", e => {
-    e.stopPropagation();
-    e.preventDefault();
-    if (!isWallDragging) return;
-    const touchPos = getEventPosition(e);
-    const dx = touchPos.x - wallDragStart.x;
-    const dy = touchPos.y - wallDragStart.y;
-    // Вычисляем угол перетаскивания
-    let angle = Math.atan2(dy, dx);
-    if (angle < 0) angle += 2 * Math.PI;
-    // Округляем до ближайшего кратного 90° (π/2)
-    angle = Math.round(angle / (Math.PI / 2)) * (Math.PI / 2);
-    // Переводим координаты касания в мировые
-    const worldPos = screenToWorld(touchPos.x, touchPos.y);
-    // Вызываем функцию установки стены с рассчитанным углом
-    placeBuildingWithOrientation(worldPos.x, worldPos.y, buildingType, angle, "player");
-    clearBuildZones();
-    isWallDragging = false;
-    currentWallDragZone = null;
-  }, { passive: false });
-  
-  // Также оставляем мышиные обработчики для ПК
-  zone.addEventListener("mousedown", e => {
-    e.stopPropagation();
-    isWallDragging = true;
-    wallDragStart = getEventPosition(e);
-    currentWallDragZone = zone;
-  });
-  zone.addEventListener("mousemove", e => {
-    if (isWallDragging && currentWallDragZone) {
-      const pos = getEventPosition(e);
-      console.log("Перетаскивание стены: dx =", pos.x - wallDragStart.x, "dy =", pos.y - wallDragStart.y);
-    }
-  });
-  zone.addEventListener("mouseup", e => {
-    if (!isWallDragging) return;
-    const pos = getEventPosition(e);
-    const dx = pos.x - wallDragStart.x;
-    const dy = pos.y - wallDragStart.y;
-    let angle = Math.atan2(dy, dx);
-    if (angle < 0) angle += 2 * Math.PI;
-    angle = Math.round(angle / (Math.PI / 2)) * (Math.PI / 2);
-    const worldPos = screenToWorld(pos.x, pos.y);
-    placeBuildingWithOrientation(worldPos.x, worldPos.y, buildingType, angle, "player");
-    clearBuildZones();
-    isWallDragging = false;
-    currentWallDragZone = null;
-  });
-  zone.addEventListener("mouseleave", e => {
-    if (isWallDragging) {
+    zone.addEventListener("mousedown", e => {
+      e.stopPropagation();
+      isWallDragging = true;
+      wallDragStart = { x: e.clientX, y: e.clientY };
+      currentWallDragZone = zone;
+    });
+    zone.addEventListener("mousemove", e => {
+      // Можно добавить визуальный индикатор (например, линию от начала перетаскивания до текущей позиции)
+      if (isWallDragging && currentWallDragZone) {
+        // Для простоты выводим отладочную информацию в консоль
+        const dx = e.clientX - wallDragStart.x;
+        const dy = e.clientY - wallDragStart.y;
+        console.log("Перетаскивание стены: dx =", dx, "dy =", dy);
+      }
+    });
+    zone.addEventListener("mouseup", e => {
+      if (!isWallDragging) return;
+      const dragEnd = { x: e.clientX, y: e.clientY };
+      const dx = dragEnd.x - wallDragStart.x;
+      const dy = dragEnd.y - wallDragStart.y;
+      // Вычисляем угол в радианах
+      let angle = Math.atan2(dy, dx);
+      if (angle < 0) angle += 2 * Math.PI;
+      // Округляем до ближайшего кратного 90° (π/2)
+      angle = Math.round(angle / (Math.PI / 2)) * (Math.PI / 2);
+      // Определяем позицию строительства по точке отпускания мыши
+      const worldPos = screenToWorld(e.clientX, e.clientY);
+      console.log("Стена будет построена с ориентацией:", angle * 180 / Math.PI, "°");
+      // Вызываем функцию установки стены с указанной ориентацией
+      placeBuildingWithOrientation(worldPos.x, worldPos.y, buildingType, angle, "player");
+      clearBuildZones();
       isWallDragging = false;
       currentWallDragZone = null;
-    }
-  });
-}
-
+    });
+    // Если пользователь отходит с курсором за пределы зоны — сбрасываем перетаскивание
+    zone.addEventListener("mouseleave", e => {
+      if (isWallDragging) {
+        isWallDragging = false;
+        currentWallDragZone = null;
+      }
+    });
+  }
 	
 	
   zone.addEventListener("click", e => {
