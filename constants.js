@@ -1,31 +1,51 @@
+const fragmentColors = {
+  worker: "#00FF00",      // зелёный для рабочих
+  fighter: "#FF0000",     // красный для истребителей
+  assault: "#800080",     // фиолетовый для штурмовиков
+  repairman: "#0000FF",   // синий для ремонтников
+  elite: "#808080",       // серый для элитных
+  building: "#FFFF00"     // например, жёлтый для зданий (можно расширить для разных типов зданий)
+};
+
+
+
 // ======================
 // === Оригинальные константы и функции (оставляем без изменений)
 // ======================
+const SPEED_WORKER = 100;
+const SPEED_REPAIRMAN = 100;
+const SPEED_FIGHTER = 95;
+const SPEED_ASSAULT = 75;
+const SPEED_ELITE = 50;
 
-const DESIRED_WAREHOUSE_COUNT = 150;
+
+
+const DESIRED_WAREHOUSE_COUNT = 20;
 const DESIRED_WORKER_COUNT = 5;
-const DESIRED_REPAIR_WORKSHOP_COUNT = 150;
-const DESIRED_REPAIRMAN_COUNT = 3;
-const DESIRED_BEACON_COUNT = 150; // для маяков
+const DESIRED_REPAIR_WORKSHOP_COUNT = 3;
+const DESIRED_REPAIRMAN_COUNT = 10;
+const DESIRED_BEACON_COUNT = 10; // для маяков
 
 const RESOURCE_CLUSTER_RADIUS = 50; // Радиус подсчёта кластера ресурсов
-const MIN_CLUSTER_DISTANCE = 10;      // Минимальное расстояние между кластерами
-const MAX_EXPANSION_DISTANCE = 300;   // Максимальное расстояние от существующей инфраструктуры для экспансии
+const MIN_CLUSTER_DISTANCE = 100;      // Минимальное расстояние между кластерами
+const MAX_EXPANSION_DISTANCE = 100;   // Максимальное расстояние от существующей инфраструктуры для экспансии
 
-const MIN_GARRISON_COUNT = 5;  // Минимальное число юнитов для массовой атаки из кластера
-const MAX_GARRISON_COUNT = 10; // Если юнитов больше – часть остаётся в обороне
+const MIN_GARRISON_COUNT = 10;  // Минимальное число юнитов для массовой атаки из кластера
+const MAX_GARRISON_COUNT = 20; // Если юнитов больше – часть остаётся в обороне
 const CLUSTER_RADIUS = 100;    // Радиус для группировки построек в кластер
 
-const DESIRED_DEFENDERS_PER_BUILDING = 2;
-const DEFENSE_RADIUS = 50; // Радиус, в пределах которого считается, что здание защищено
+const DESIRED_DEFENDERS_PER_BUILDING = 1;
+const DEFENSE_RADIUS = 200; // Радиус, в пределах которого считается, что здание защищено
 
+const GARRISON_COUNT_PER_CLUSTER = MIN_GARRISON_COUNT; // число юнитов, которые должны оставаться в кластере для защиты
 
 // Константы игры (новые здания)
+const BASE_COST = { gold: 211, silicon: 305, plasma: 113 };
 const WAREHOUSE_COST = { gold: 28, silicon: 44, plasma: 17 };
 const WORKER_COST = { gold: 9, silicon: 16, plasma: 6 };
 const REPAIR_WORKSHOP_COST = { gold: 34, silicon: 43, plasma: 21};
 const REPAIRMAN_COST = { gold: 13, silicon: 22, plasma: 9 };
-const BARRACKS_COST = { gold: 56, silicon: 73, plasma: 27 };
+const BARRACKS_COST = { gold: 46, silicon: 56, plasma: 24 };
 const FIGHTER_COST = { gold: 24, silicon: 27, plasma: 12 };
 const ASSAULT_COST = { gold: 56, silicon: 72, plasma: 26 };
 const ELITE_COST = { gold: 82, silicon: 94, plasma: 36 };
@@ -45,14 +65,14 @@ let persistentFogMap = [];
 
 
 const WORKER_SPEED = 100;
-const FIGHTER_BULLET_CONFIG = { speed: 300, lifetime: 1.5 };
-const TURRET_BULLET_CONFIG = { speed: 300, lifetime: 1.5 };
+const FIGHTER_BULLET_CONFIG = { speed: 200, lifetime: 1.5 };
+const TURRET_BULLET_CONFIG = { speed: 200, lifetime: 1.5 };
 const AUTO_COLLECT_ENABLED = true;
 const GRID_SIZE = 50;
 
 const MISSILE_CONFIG = { 
-  speed: 200,          // Скорость полёта ракеты
-  lifetime: 1,         // Время жизни (секунд)
+  speed: 130,          // Скорость полёта ракеты
+  lifetime: 5,         // Время жизни (секунд)
   damage: 20,          // Основной урон при попадании
   splashRadius: 30,    // Радиус действия splash-урона
   splashDamage: 5     // Урон по объектам в области
@@ -82,16 +102,7 @@ const MIN_TURN_ANGLE = 200 * Math.PI / 180;
 const MAX_TURN_ANGLE = 300 * Math.PI / 180;
 
 
-// Глобальное состояние игры
-const gameState = {
-  buildings: [],
-  units: [],
-  resources: [],
-  bullets: [],
-  particles: [],
-  playerResources: { gold: 300, silicon: 200, plasma: 250 },
-  aiResources: { gold: 300, silicon: 200, plasma: 250 }
-};
+
 let selectedUnits = [];
 
 
@@ -350,19 +361,27 @@ function isWithinAlliedZone(x, y) {
 
 /* === Условие победы === */
 function checkVictoryConditions() {
-  if (!aiBase || aiBase.health <= 0) {
+  const playerBases = gameState.buildings.filter(b =>
+    b.owner === "player" && (b.type === "base" || b.type === "base2" || b.type === "base3")
+  );
+  const aiBases = gameState.buildings.filter(b =>
+    b.owner === "ai" && (b.type === "base" || b.type === "base2" || b.type === "base3")
+  );
+  
+  if (aiBases.length === 0) {
     clearInterval(aiLogicInterval);
-    cancelAnimationFrame(gameLoop);
-    showVictoryMessage("Победа! База противника уничтожена.");
+    cancelAnimationFrame(gameLoopId);
+    showVictoryMessage("Победа! Все базы противника уничтожены.");
     return;
   }
-  if (!playerBase || playerBase.health <= 0) {
+  if (playerBases.length === 0) {
     clearInterval(aiLogicInterval);
-    cancelAnimationFrame(gameLoop);
-    showVictoryMessage("Поражение! Ваша база уничтожена.");
+    cancelAnimationFrame(gameLoopId);
+    showVictoryMessage("Поражение! Все ваши базы уничтожены.");
     return;
   }
 }
+
 function showVictoryMessage(message) {
   const victoryDiv = document.createElement("div");
   victoryDiv.innerText = message;

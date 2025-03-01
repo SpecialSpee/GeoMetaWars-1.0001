@@ -1,3 +1,160 @@
+// Вспомогательные переменные для долгого тапа
+let longTapTimeout;
+let longTapFired = false;
+const longTapDuration = 600; // время в мс, по истечении которого считается long tap
+
+// Обработчик для touchstart
+canvas.addEventListener("touchstart", e => {
+  if (e.touches.length === 1) {
+    longTapFired = false; // сбрасываем флаг
+    const touch = e.touches[0];
+    longTapTimeout = setTimeout(() => {
+      processLongTap(touch);
+      longTapFired = true;
+    }, longTapDuration);
+  }
+}, { passive: false });
+
+// Если происходит движение – отменяем long tap
+canvas.addEventListener("touchmove", e => {
+  clearTimeout(longTapTimeout);
+}, { passive: false });
+
+// Обработчик для touchend
+canvas.addEventListener("touchend", e => {
+  clearTimeout(longTapTimeout);
+  // Если долгий тап уже сработал – не вызываем обычный обработчик
+  if (longTapFired) {
+    e.preventDefault();
+    return;
+  }
+  // Если это обычное касание, обрабатываем как клик
+  if (e.changedTouches.length === 1 && !document.querySelector(".selectionBox")) {
+    const touch = e.changedTouches[0];
+    processCanvasClick({ x: touch.clientX, y: touch.clientY });
+  }
+}, { passive: false });
+
+function processLongTap(touch) {
+  const pos = screenToWorld(touch.clientX, touch.clientY);
+  const unitRadius = 5;
+  // Ищем юнит, на котором произошло долгого нажатие
+  const tappedUnit = gameState.units.find(u =>
+    u.owner === "player" && Math.hypot(u.x - pos.x, u.y - pos.y) < unitRadius
+  );
+  if (tappedUnit) {
+    // Выделяем все юниты того же типа
+    selectedUnits = gameState.units.filter(u => u.owner === "player" && u.type === tappedUnit.type);
+  }
+}
+
+
+
+// Добавляем новое свойство для хранения фрагментов в состоянии игры:
+gameState.fragments = [];
+
+// Функция для генерации фрагментов при разрушении объекта (юнита или здания)
+// Функция для генерации фрагментов разрушения в виде нерегулярных многоугольников
+
+function spawnDestructionFragments(x, y, width, height, unitType, numFragments = Math.floor(Math.random() * 4) + 4, initialVx = 0, initialVy = 0) {
+  // Если unitType начинается с "#", предполагаем, что это уже цвет, иначе ищем его в словаре
+  const color = (typeof unitType === "string" && unitType.startsWith("#"))
+    ? unitType
+    : (fragmentColors[unitType] || "gray");
+
+  for (let i = 0; i < numFragments; i++) {
+    const numVertices = Math.floor(Math.random() * 4) + 4;
+    const points = [];
+    const avgRadius = (width + height) / 6;
+    for (let j = 0; j < numVertices; j++) {
+      const baseAngle = (j / numVertices) * 2 * Math.PI;
+      const angleOffset = (Math.random() - 0.5) * (Math.PI / numVertices);
+      const angle = baseAngle + angleOffset;
+      const radius = avgRadius * (0.7 + Math.random() * 0.6);
+      points.push({
+        x: radius * Math.cos(angle),
+        y: radius * Math.sin(angle)
+      });
+    }
+
+    // Здесь мы добавляем начальное смещение скорости фрагмента,
+    // чтобы фрагменты "наследовали" импульс уничтожённого юнита.
+    const fragment = {
+      x: x,
+      y: y,
+      vx: initialVx + (Math.random() - 1) * 50,
+      vy: initialVy + (Math.random() - 1) * 50,
+      angle: Math.random() * Math.PI * 4,
+      angularVelocity: (Math.random() - 1) * 4,
+      points: points,
+      life: 3 + Math.random() * 2,
+      maxLife: 3 + Math.random() * 2,
+      color: color
+    };
+    gameState.fragments.push(fragment);
+  }
+}
+
+
+
+// Функция обновления фрагментов (вызывается каждый кадр, deltaTime в секундах)
+function updateFragments(deltaTime) {
+  // Проходим по фрагментам в обратном порядке, чтобы безопасно удалять просроченные
+  for (let i = gameState.fragments.length - 1; i >= 0; i--) {
+    const frag = gameState.fragments[i];
+    // Обновление позиции по скорости
+    frag.x += frag.vx * deltaTime;
+    frag.y += frag.vy * deltaTime;
+    // Обновление угла поворота
+    frag.angle += frag.angularVelocity * deltaTime;
+    // Если гравитация не нужна – убираем её (иначе можно раскомментировать следующую строку)
+    // frag.vy += 300 * deltaTime;
+    // Немного затухания скорости для сохранения импульса
+    frag.vx *= 0.99;
+    frag.vy *= 0.99;
+    // Уменьшаем оставшееся время жизни
+    frag.life -= deltaTime;
+    if (frag.life <= 0) {
+      gameState.fragments.splice(i, 1);
+    }
+  }
+}
+
+// Функция отрисовки фрагментов с учетом камеры (зум, смещение)
+function drawFragments() {
+  ctx.save();
+  // Применяем текущие смещения и масштаб камеры
+  ctx.translate(camera.offsetX, camera.offsetY);
+  ctx.scale(camera.scale, camera.scale);
+  gameState.fragments.forEach(frag => {
+    ctx.save();
+    ctx.translate(frag.x, frag.y);
+    ctx.rotate(frag.angle);
+    // Прозрачность зависит от оставшегося времени жизни
+    const alpha = Math.max(0, frag.life / frag.maxLife);
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = frag.color;
+    // Рисуем фрагмент как многоугольник, если заданы вершины
+    if (frag.points && frag.points.length > 0) {
+      ctx.beginPath();
+      ctx.moveTo(frag.points[0].x, frag.points[0].y);
+      for (let j = 1; j < frag.points.length; j++) {
+        ctx.lineTo(frag.points[j].x, frag.points[j].y);
+      }
+      ctx.closePath();
+      ctx.fill();
+    } else {
+      // Если по какой-то причине не заданы вершины, рисуем квадрат
+      ctx.fillRect(-5, -5, 10, 10);
+    }
+    ctx.restore();
+  });
+  ctx.restore();
+}
+
+
+
+//ctx.restore()
 // Инициализация тумана войны с расширением persistentFogMap без полного сброса
 function initFogOfWar() {
   const cols = Math.ceil(worldWidth / FOG_CELL_SIZE);
@@ -275,35 +432,134 @@ function lerpAngle(a, b, t) {
   let diff = ((b - a + Math.PI) % (2 * Math.PI)) - Math.PI;
   return a + diff * t;
 }
-// Функция динамичного перемещения с элементом случайного "виляния"
-function dynamicMove(unit, target, deltaTime) {
-  const desiredAngle = Math.atan2(target.y - unit.y, target.x - unit.x);
-  unit.angle = lerpAngle(unit.angle, desiredAngle, TURN_SPEED * deltaTime);
-  const wanderX = (Math.random() - 0.5) * WANDER_STRENGTH;
-  const wanderY = (Math.random() - 0.5) * WANDER_STRENGTH;
-  const vx = Math.cos(unit.angle) * BASE_SPEED + wanderX;
-  const vy = Math.sin(unit.angle) * BASE_SPEED + wanderY;
-  unit.x += vx * deltaTime;
-  unit.y += vy * deltaTime;
+
+// Функция обновления пуль, вызываемая каждый кадр (deltaTime в секундах)
+function updateBullets(deltaTime) {
+  // Проходим по пулям в обратном порядке, чтобы безопасно удалять просроченные пули
+  for (let i = gameState.bullets.length - 1; i >= 0; i--) {
+    let bullet = gameState.bullets[i];
+    // Обновляем позицию пули
+    bullet.x += Math.cos(bullet.angle) * bullet.speed * deltaTime;
+    bullet.y += Math.sin(bullet.angle) * bullet.speed * deltaTime;
+    // Уменьшаем время жизни пули
+    bullet.lifetime -= deltaTime;
+    if (bullet.lifetime <= 0) {
+      // Если это ракета, инициируем взрыв с splash-уроном
+      if (bullet.isMissile) {
+        explodeMissile(bullet);
+      }
+      // Удаляем пулю из массива
+      gameState.bullets.splice(i, 1);
+    }
+  }
 }
-// Функция атаки для штурмовика (assault) – два режима: пулемётный огонь и ракетный выстрел
+
+// Функция взрыва ракеты, которая наносит splash-урон всем целям в заданном радиусе
+function explodeMissile(bullet) {
+  // Находим все объекты, принадлежащие противнику, находящиеся в пределах splashRadius
+  const targets = gameState.units.concat(gameState.buildings).filter(target => {
+    return target.owner !== bullet.shooter.owner &&
+           target.health > 0 &&
+           Math.hypot(target.x - bullet.x, target.y - bullet.y) <= bullet.splashRadius;
+  });
+  targets.forEach(target => {
+    target.health -= bullet.splashDamage;
+    // Дополнительная логика: можно добавить проверку на уничтожение цели, запуск анимации и т.д.
+    if (target.health <= 0) {
+      // Например, запуск частиц или удаление объекта
+      spawnParticles(target.x, target.y, "orange");
+	  spawnDestructionFragments(target.x, target.y, target.width, target.height, unit.vx, unit.vy, "red");
+      // Удаление объекта можно проводить отдельно
+    }
+  });
+  // Запускаем анимацию взрыва (например, частицы взрыва)
+  spawnParticles(bullet.x, bullet.y, "skyblue");
+}
+
+
+// Функция динамичного перемещения с элементом случайного "виляния"
+// Функция динамичного перемещения с физической моделью (ускорение, инерция, орбитальное маневрирование)
+function dynamicMove(unit, target, deltaTime) {
+  const dx = target.x - unit.x;
+  const dy = target.y - unit.y;
+  const distance = Math.hypot(dx, dy);
+  if (distance === 0) return;
+  
+  // Вычисляем желаемый угол движения (направление к цели)
+  const desiredAngle = Math.atan2(dy, dx);
+  
+  // Ограничиваем скорость поворота (например, 0.05 рад/кадр)
+  const maxTurnSpeed = 0.05;
+  unit.angle = lerpAngle(unit.angle, desiredAngle, maxTurnSpeed);
+  
+  // Теперь вычисляем вектор ускорения на основе текущего угла (т.е. направления "носа")
+  const frontDirX = Math.cos(unit.angle);
+  const frontDirY = Math.sin(unit.angle);
+  
+  // Плавное приближение к желаемой дистанции (desiredDistance)
+  const desiredDistance = unit.desiredDistance || 100;
+  const distanceError = distance - desiredDistance;
+  
+  // Настраиваем коэффициенты для ускорения
+  const approachStrength = 0.3;
+  const orbitStrength = 0.3;
+  
+  // Тангенциальный вектор (перпендикуляр к направлению "носа")
+  const tanX = -frontDirY;
+  const tanY = frontDirX;
+  
+  // Вычисляем ускорение, которое действует по направлению "носа" с учетом ошибки дистанции
+  const ax = (frontDirX * distanceError * approachStrength) + (tanX * orbitStrength);
+  const ay = (frontDirY * distanceError * approachStrength) + (tanY * orbitStrength);
+  
+  // Инициализируем скорость, если её нет
+  if (typeof unit.vx !== 'number') unit.vx = 0;
+  if (typeof unit.vy !== 'number') unit.vy = 0;
+  
+  // Применяем затухание (для сохранения импульса)
+  const damping = 0.995;
+  unit.vx = unit.vx * damping + ax * deltaTime;
+  unit.vy = unit.vy * damping + ay * deltaTime;
+  
+  // Ограничение максимальной скорости (при необходимости)
+  const maxSpeed = 5;
+  const currentSpeed = Math.hypot(unit.vx, unit.vy);
+  if (currentSpeed > maxSpeed) {
+    unit.vx = (unit.vx / currentSpeed) * maxSpeed;
+    unit.vy = (unit.vy / currentSpeed) * maxSpeed;
+  }
+  
+  unit.x += unit.vx * deltaTime;
+  unit.y += unit.vy * deltaTime;
+}
+
+
+
+// Функция атаки для штурмовика (assault)
+// Сначала выполняется стрельба, затем юнит продолжает маневрировать, используя новую физическую модель движения
 function dynamicAttackAssault(unit, target, deltaTime) {
+  if (unit.health <= 0) return;
   if (!target || target.health <= 0) {
     unit.target = null;
     return;
   }
   
+  // Добавляем проверку расстояния как у fighter:
   const currentDistance = Math.hypot(target.x - unit.x, target.y - unit.y);
+  if (currentDistance > unit.range) {
+    unit.target = null;
+    return;
+  }
+  
   const now = performance.now();
   
-  // 1. Пулемётный огонь: если цель в пределах machineGunRange и прошёл интервал стрельбы
+  // 1. Пулемётный огонь
   if (currentDistance <= unit.machineGunRange && (now - unit.lastMachineGunFireTime >= unit.machineGunFireRate)) {
-    // Используем стандартную функцию fireBullet для пулемётного огня
     fireBullet(unit, target);
     unit.lastMachineGunFireTime = now;
   }
   
-  // 2. Ракетный выстрел: если цель в пределах rocketRange и кулдаун истёк
+  // 2. Ракетный выстрел
   if (currentDistance <= unit.rocketRange && (now - unit.lastRocketFireTime >= unit.rocketCooldown)) {
     let rocket = new Bullet(unit.x, unit.y, unit.angle, MISSILE_CONFIG.speed, unit, target);
     rocket.lifetime = MISSILE_CONFIG.lifetime;
@@ -312,15 +568,128 @@ function dynamicAttackAssault(unit, target, deltaTime) {
     rocket.splashDamage = MISSILE_CONFIG.splashDamage;
     rocket.isMissile = true;
     rocket.target = target;
-    rocket.color = "255,0,0"; // Цвет ракет (можно изменить)
+    rocket.color = "255,0,0";
+    gameState.bullets.push(rocket);
     gameState.bullets.push(rocket);
     unit.lastRocketFireTime = now;
   }
   
-  // Независимое движение, чтобы штурмовик продолжал маневрировать
+  // Маневрируем, используя динамическое движение
   dynamicMove(unit, target, deltaTime);
 }
-// Вызов в основной функции атаки
+
+
+// Функция атаки для элитного юнита
+function dynamicAttackElite(unit, target, deltaTime) {
+  if (unit.health <= 0 || !target || target.health <= 0) {
+    unit.target = null;
+    return;
+  }
+
+  const currentDistance = Math.hypot(target.x - unit.x, target.y - unit.y);
+  const preferredRange = unit.artilleryPreferredRange || unit.artilleryRange || 300;
+  const now = performance.now();
+  
+  // Если цель слишком близко – может потребоваться отступить, чтобы обеспечить оптимальную дистанцию для артиллерии/лазера.
+  if (currentDistance < preferredRange * 0.8) {
+    const angleAway = Math.atan2(unit.y - target.y, unit.x - target.x);
+    const retreatX = target.x + Math.cos(angleAway) * preferredRange;
+    const retreatY = target.y + Math.sin(angleAway) * preferredRange;
+    dynamicMove(unit, { x: retreatX, y: retreatY }, deltaTime);
+  } else if (currentDistance > preferredRange * 1.2) {
+    // Если цель слишком далеко – подлетаем.
+    dynamicMove(unit, target, deltaTime);
+  }
+
+  // Отдельно обрабатываем melee-атаку
+  if (currentDistance <= unit.meleeRange && now - unit.lastMeleeAttack >= unit.meleeCooldown) {
+    // Выполнение melee-атаки
+    const desiredAngle = Math.atan2(target.y - unit.y, target.x - unit.x);
+    const pelletCount = 7;
+    const spreadAngle = 30 * Math.PI / 180;
+    for (let i = 0; i < pelletCount; i++) {
+      const angleOffset = -spreadAngle / 2 + (spreadAngle * i) / (pelletCount - 1);
+      const bulletAngle = desiredAngle + angleOffset;
+      let pellet = new Bullet(unit.x, unit.y, bulletAngle, MELEE_BULLET_CONFIG.speed, unit, target);
+      pellet.lifetime = MELEE_BULLET_CONFIG.lifetime;
+      pellet.damage = MELEE_BULLET_CONFIG.damage;
+      pellet.isMelee = true;
+      pellet.color = "255,165,0";
+      gameState.bullets.push(pellet);
+    }
+    unit.lastMeleeAttack = now;
+  }
+
+  // Отдельно обрабатываем артиллерию, если цель в пределах
+  if (currentDistance <= unit.artilleryRange && now - unit.lastArtilleryAttack >= unit.artilleryCooldown) {
+    const desiredAngle = Math.atan2(target.y - unit.y, target.x - unit.x);
+    const artilleryCount = 5 + Math.floor(Math.random() * 6);
+    for (let i = 0; i < artilleryCount; i++) {
+      const artilleryAngle = desiredAngle + (Math.random() - 0.5) * 0.2;
+      let artillery = new Bullet(unit.x, unit.y, artilleryAngle, ARTILLERY_BULLET_CONFIG.speed, unit, target);
+      artillery.lifetime = ARTILLERY_BULLET_CONFIG.lifetime;
+      artillery.damage = ARTILLERY_BULLET_CONFIG.damage;
+      artillery.splashRadius = ARTILLERY_BULLET_CONFIG.splashRadius;
+      artillery.splashDamage = ARTILLERY_BULLET_CONFIG.splashDamage;
+      artillery.color = "0,255,0";
+      gameState.bullets.push(artillery);
+    }
+    unit.lastArtilleryAttack = now;
+  }
+
+  // Отдельно обрабатываем лазерный выстрел, если цель в пределах
+  if (currentDistance <= unit.laserRange && now - unit.lastLaserAttack >= unit.laserCooldown) {
+  // Вычисляем угол от юнита до цели
+  const laserAngle = Math.atan2(target.y - unit.y, target.x - unit.x);
+  const laserLength = unit.laserRange;
+  const laserDamage = 50;
+  const penetrations = 4;
+  unit.laserBeam = {
+    startX: unit.x,
+    startY: unit.y,
+    endX: unit.x + Math.cos(laserAngle) * laserLength,
+    endY: unit.y + Math.sin(laserAngle) * laserLength,
+    timestamp: now
+  };
+
+  let hits = 0;
+  const enemyCandidates = gameState.units.concat(gameState.buildings)
+    .filter(e => e.owner !== unit.owner && e.health > 0);
+  enemyCandidates.sort((a, b) => {
+    const da = ((a.x - unit.x) * Math.cos(laserAngle) + (a.y - unit.y) * Math.sin(laserAngle));
+    const db = ((b.x - unit.x) * Math.cos(laserAngle) + (b.y - unit.y) * Math.sin(laserAngle));
+    return da - db;
+  });
+  for (let enemy of enemyCandidates) {
+    const proj = ((enemy.x - unit.x) * Math.cos(laserAngle) + (enemy.y - unit.y) * Math.sin(laserAngle));
+    if (proj > 0 && proj < laserLength) {
+      const perp = Math.abs(-Math.sin(laserAngle) * (enemy.x - unit.x) + Math.cos(laserAngle) * (enemy.y - unit.y));
+      if (perp < 20) {
+        enemy.health -= laserDamage;
+        if (enemy.health <= 0) {
+          if (enemy instanceof Building) {
+            spawnParticles(enemy.x, enemy.y, "red");
+            gameState.buildings = gameState.buildings.filter(b => b !== enemy);
+          } else if (enemy instanceof Unit) {
+            gameState.units = gameState.units.filter(u => u !== enemy);
+            selectedUnits = selectedUnits.filter(u => u !== enemy);
+          }
+        }
+        hits++;
+        if (hits >= penetrations) break;
+      }
+    }
+  }
+  unit.lastLaserAttack = now;
+}
+
+}
+
+
+
+
+
+// Основная функция атаки, распределяющая вызовы в зависимости от типа юнита
 function dynamicAttack(unit, target, deltaTime) {
   if (unit.type === "elite") {
     dynamicAttackElite(unit, target, deltaTime);
@@ -354,107 +723,6 @@ function dynamicAttack(unit, target, deltaTime) {
   }
 }
 
-function dynamicAttackElite(unit, target, deltaTime) {
-  if (!target || target.health <= 0) {
-    unit.target = null;
-    return;
-  }
-  
-  const currentDistance = Math.hypot(target.x - unit.x, target.y - unit.y);
-  // Если цель выходит за общий радиус поражения, прекращаем атаку
-  if (currentDistance > unit.range) {
-    unit.target = null;
-    return;
-  }
-  
-  const now = performance.now();
-  
-  // 1. Меле атака с использованием дроби (пеллетов)
-if (currentDistance <= unit.meleeRange && now - unit.lastMeleeAttack >= unit.meleeCooldown) {
-  const pelletCount = 7; // количество пеллетов
-  const spreadAngle = 30 * Math.PI / 180; // общий разброс, например, 30 градусов в радианах
-  for (let i = 0; i < pelletCount; i++) {
-    // Вычисляем смещение угла для каждой пеллеты
-    const angleOffset = -spreadAngle/2 + (spreadAngle * i) / (pelletCount - 1);
-    const bulletAngle = unit.angle + angleOffset;
-    // Создаем новую пулю для melee атаки
-    let pellet = new Bullet(unit.x, unit.y, bulletAngle, MELEE_BULLET_CONFIG.speed, unit, target);
-    pellet.lifetime = MELEE_BULLET_CONFIG.lifetime;
-    pellet.damage = MELEE_BULLET_CONFIG.damage;
-    pellet.isMelee = true; // Флаг, чтобы отличить эти пули, если понадобится
-    pellet.color = "255,165,0"; // Например, оранжевый цвет для дроби
-    gameState.bullets.push(pellet);
-  }
-  unit.lastMeleeAttack = now;
-}
-
-  
-  // 2.  залп (используя логику, аналогичную артиллерии)
-  if (currentDistance <= unit.artilleryRange && now - unit.lastArtilleryAttack >= unit.artilleryCooldown) {
-  const artilleryCount = 5 + Math.floor(Math.random() * 6); // от 5 до 10 артиллерийских снарядов
-  for (let i = 0; i < artilleryCount; i++) {
-    const artilleryAngle = unit.angle + (Math.random() - 0.5) * 0.2;
-    let artillery = new Bullet(unit.x, unit.y, artilleryAngle, ARTILLERY_BULLET_CONFIG.speed, unit, target);
-    artillery.lifetime = ARTILLERY_BULLET_CONFIG.lifetime;
-    artillery.damage = ARTILLERY_BULLET_CONFIG.damage;
-    artillery.splashRadius = ARTILLERY_BULLET_CONFIG.splashRadius;
-    artillery.splashDamage = ARTILLERY_BULLET_CONFIG.splashDamage;
-    artillery.color = "0,255,0";
-    gameState.bullets.push(artillery);
-  }
-  unit.lastArtilleryAttack = now;
-}
-
-  
-  // 3. Лазерный выстрел
-  if (currentDistance <= unit.laserRange && now - unit.lastLaserAttack >= unit.laserCooldown) {
-    const laserLength = unit.laserRange;
-    const laserDamage = 50;
-    const penetrations = 4;
-    // Сохраняем параметры лазерного луча для отрисовки
-    unit.laserBeam = {
-      startX: unit.x,
-      startY: unit.y,
-      endX: unit.x + Math.cos(unit.angle) * laserLength,
-      endY: unit.y + Math.sin(unit.angle) * laserLength,
-      timestamp: now
-    };
-    
-    let hits = 0;
-    // Получаем список потенциальных целей, отсортированный по расстоянию вдоль направления атаки
-    const enemyCandidates = gameState.units.concat(gameState.buildings)
-      .filter(e => e.owner !== unit.owner && e.health > 0);
-    enemyCandidates.sort((a, b) => {
-      const da = ((a.x - unit.x) * Math.cos(unit.angle) + (a.y - unit.y) * Math.sin(unit.angle));
-      const db = ((b.x - unit.x) * Math.cos(unit.angle) + (b.y - unit.y) * Math.sin(unit.angle));
-      return da - db;
-    });
-    for (let enemy of enemyCandidates) {
-      const proj = ((enemy.x - unit.x) * Math.cos(unit.angle) + (enemy.y - unit.y) * Math.sin(unit.angle));
-      if (proj > 0 && proj < laserLength) {
-        const perp = Math.abs(-Math.sin(unit.angle) * (enemy.x - unit.x) + Math.cos(unit.angle) * (enemy.y - unit.y));
-        if (perp < 20) {
-          enemy.health -= laserDamage;
-          if (enemy.health <= 0) {
-            if (enemy instanceof Building) {
-              spawnParticles(enemy.x, enemy.y, "red");
-              gameState.buildings = gameState.buildings.filter(b => b !== enemy);
-            } else if (enemy instanceof Unit) {
-              gameState.units = gameState.units.filter(u => u !== enemy);
-              selectedUnits = selectedUnits.filter(u => u !== enemy);
-            }
-          }
-          hits++;
-          if (hits >= penetrations) break;
-        }
-      }
-    }
-    unit.lastLaserAttack = now;
-  }
-  
-  // Независимое маневрирование: вызываем общую функцию движения, чтобы юнит не стоял на месте во время атаки
-  dynamicMove(unit, target, deltaTime);
-}
 // Функция анимации перемещения и масштабирования
 function animateMoveAndScale(unit, targetX, targetY, targetScale, duration, callback) {
   const startTime = performance.now();
@@ -926,3 +1194,7 @@ function hireEliteForPlayer(barracks3) {
   gameState.units.push(elite);
   moveUnit(elite, target.x, target.y, () => startFighterCycle(elite));
 }
+
+
+
+

@@ -1,5 +1,18 @@
 let gameLoopId;
 let isPaused = false;
+let lastTime = performance.now();
+
+// Глобальное состояние игры
+const gameState = {
+  buildings: [],
+  units: [],
+  resources: [],
+  bullets: [],
+  particles: [],
+  playerResources: { gold: 300, silicon: 400, plasma: 250 },
+  aiResources: { gold: 300, silicon: 400, plasma: 250 }
+};
+
 
 // Объявляем переменные виртуального мира заранее
 let worldWidth, worldHeight;
@@ -49,7 +62,7 @@ class Building {
     } else if (type === "turret") {
       this.width = 12; this.height = 12;
       this.health = 250; this.maxHealth = 250;
-      this.range = 250; this.fireRate = 150;
+      this.range = 250; this.fireRate = 70;
       this.lastFireTime = 0; this.angle = 0;
       this.target = null;
     } else if (type === "turret2") {
@@ -98,29 +111,37 @@ class Unit {
     this.inWorkshop = null;
     this.maneuvering = false;
     if (type === "worker") {
+	  this.vx = 0; // инициализация скорости по x
+      this.vy = 0; // инициализация скорости по y
       this.health = 50;
       this.maxHealth = 50;
     } else if (type === "fighter") {
+		this.vx = 0; // инициализация скорости по x
+      this.vy = 0; // инициализация скорости по y
       this.health = 100;
       this.maxHealth = 100;
       this.range = 150;
-      this.fireRate = 100;
+      this.fireRate = 350;
       this.lastFireTime = 0;
       this.orbitRadius = undefined;
       this.orbitAngle = undefined;
       this.engagementRadius = 500;
     } else if (type === "repairman") {
+		this.vx = 0; // инициализация скорости по x
+      this.vy = 0; // инициализация скорости по y
       this.health = 50;
       this.maxHealth = 50;
       this.engagementRadius = 500;
       this.scale = 0.4;
     }
     else if (type === "assault") {
+		this.vx = 0; // инициализация скорости по x
+      this.vy = 0; // инициализация скорости по y
   this.health = 200;
   this.maxHealth = 200;
   // Пулемётный режим:
-  this.machineGunRange = 100;          // Радиус действия пулемёта
-  this.machineGunFireRate = 200;         // Интервал стрельбы пулемётом (мс)
+  this.machineGunRange = 200;          // Радиус действия пулемёта
+  this.machineGunFireRate = 250;         // Интервал стрельбы пулемётом (мс)
   this.lastMachineGunFireTime = 0;
   // Ракетный режим (аналог турели2):
   this.rocketRange = 300;               // Радиус для ракетного выстрела
@@ -132,6 +153,8 @@ class Unit {
 
     // Новый тип: элитный (лингкор)
     else if (type === "elite") {
+		this.vx = 0; // инициализация скорости по x
+      this.vy = 0; // инициализация скорости по y
       this.health = 350;
       this.maxHealth = 350;
       this.range = 300;
@@ -358,6 +381,10 @@ const starField = {
   }
 };
 starField.init();
+
+
+
+
 
 function renderGame() {
 //console.log("renderGame called");
@@ -979,7 +1006,7 @@ function startWorkerCycle(unit, base) {
   moveUnit(unit, target.x, target.y, () => {
     if (target.amount > 0) {
       target.amount--;
-      unit.carrying = (unit.carrying || 0) + 5;
+      unit.carrying = (unit.carrying || 0) + 10;
     }
 
     const deliveryBuilding = findNearestDeliveryBuilding(unit.x, unit.y, unit.owner);
