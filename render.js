@@ -1,17 +1,8 @@
 let gameLoopId;
 let isPaused = false;
 let lastTime = performance.now();
+let quadtree;
 
-// Глобальное состояние игры
-const gameState = {
-  buildings: [],
-  units: [],
-  resources: [],
-  bullets: [],
-  particles: [],
-  playerResources: { gold: 300, silicon: 400, plasma: 250 },
-  aiResources: { gold: 300, silicon: 400, plasma: 250 }
-};
 
 
 // Объявляем переменные виртуального мира заранее
@@ -90,8 +81,8 @@ class Building {
       this.width = 20; this.height = 15;
       this.fighters = 0; this.health = 80; this.maxHealth = 80;
     } else if (type === "wall") {
-      this.width = 40; this.height = 10;
-      this.health = 200; this.maxHealth = 200;
+      this.width = 50; this.height = 5;
+      this.health = 400; this.maxHealth = 400;
     }
   }
 }
@@ -383,6 +374,101 @@ const starField = {
 starField.init();
 
 
+// Функция обновления поведения скоплений (swarm behavior)
+// Определяем её в глобальной области видимости render.js
+function updateSwarmBehavior(deltaTime) {
+  const neighborRadius = 15;         // Радиус для поиска соседей (в мировых координатах)
+  const cohesionFactor = 0.05;         // Влияние стремления к центру масс соседей
+  const alignmentFactor = 0.05;        // Влияние выравнивания направления
+  const separationDistance = 20;       // Минимальное расстояние между юнитами
+  const separationSmoothing = 1;       // Коэффициент сглаживания отделения
+
+  // Этап 1: Когезия и выравнивание – ищем соседей через квадродерево
+  gameState.units.forEach(unit => {
+    // Запрос соседей – фильтруем только юниты (исключая здания)
+    const neighbors = getObjectsInRange({ x: unit.x, y: unit.y }, neighborRadius)
+      .filter(other => other !== unit && other.owner === unit.owner && other instanceof Unit);
+      
+    const count = neighbors.length;
+    if (count > 0) {
+      let sumX = 0, sumY = 0, sumAngle = 0;
+      neighbors.forEach(other => {
+        sumX += other.x;
+        sumY += other.y;
+        sumAngle += other.angle;
+      });
+      const centerX = sumX / count;
+      const centerY = sumY / count;
+      const avgAngle = sumAngle / count;
+      const desiredAngle = Math.atan2(centerY - unit.y, centerX - unit.x);
+      unit.angle = lerpAngle(unit.angle, desiredAngle, cohesionFactor * deltaTime);
+      unit.angle = lerpAngle(unit.angle, avgAngle, alignmentFactor * deltaTime);
+    }
+  });
+
+  // Этап 2: Отделение – используем квадродерево для поиска слишком близких соседей
+  gameState.units.forEach(unit => {
+    // Опять же, фильтруем только юниты
+    const closeNeighbors = getObjectsInRange({ x: unit.x, y: unit.y }, separationDistance)
+      .filter(other => other !== unit && other.owner === unit.owner && other instanceof Unit);
+      
+    closeNeighbors.forEach(other => {
+      const dx = unit.x - other.x;
+      const dy = unit.y - other.y;
+      const dist = Math.hypot(dx, dy);
+      if (dist < separationDistance && dist > 0) {
+        const overlap = separationDistance - dist;
+        const adjustment = (overlap * separationSmoothing * deltaTime) / 2;
+        const adjustX = (dx / dist) * adjustment;
+        const adjustY = (dy / dist) * adjustment;
+        unit.x += adjustX;
+        unit.y += adjustY;
+        other.x -= adjustX;
+        other.y -= adjustY;
+      }
+    });
+  });
+}
+
+
+// Функция обновления юнитов
+function updateUnits(deltaTime) {
+  gameState.units.forEach(unit => {
+    // Если у юнита нет команд, добавляем автоматическое поведение для боевых юнитов
+    if (unit.commandQueue.length === 0) {
+      // Если юнит является боевым и уже имеет цель
+      if ((unit.type === "fighter" || unit.type === "assault" || unit.type === "elite") && unit.target) {
+        // Если тактика ещё не установлена, можно случайно выбрать одну
+        if (!unit.tactic) {
+          // Например, случайный выбор между "orbit" и "figure8"
+          unit.tactic = Math.random() < 0.5 ? "orbit" : "figure8";
+        }
+        // Вызываем расширенное динамическое движение
+        dynamicMoveAdvanced(unit, unit.target, deltaTime);
+      } else {
+        // Для рабочих и ремонтников или если цели нет – стандартное поведение
+        unit.idleTimer += deltaTime;
+        // Здесь могут быть другие действия (например, автосбор ресурсов для рабочих)
+      }
+    }
+    // Если в очереди команд есть команды – обрабатываем их
+    if (unit.commandQueue.length > 0) {
+      processCommandQueue(unit);
+    }
+  });
+  
+  // Фильтрация юнитов с нулевым или отрицательным здоровьем
+  gameState.units = gameState.units.filter(unit => {
+    if (unit.health <= 0) {
+      removeUnit(unit);
+      return false;
+    }
+    return true;
+  });
+  
+  updateSwarmBehavior(deltaTime);
+}
+
 
 
 
@@ -419,7 +505,9 @@ function renderGame() {
       ctx.fillRect(-building.width / 2, 0, 2, 2);
       ctx.fillRect(building.width / 2 - 2, 0, 2, 2);
       ctx.globalAlpha = 1;
-    }else if (building.type === "wall") {
+    }
+	  
+	  else if (building.type === "wall") {
   ctx.rotate(building.angle); // поворот стены по заданному углу
   ctx.fillStyle = building.owner === "player" ? "rgba(0,128,255,0.7)" : "rgba(255,128,0,0.7)";
   ctx.fillRect(-building.width / 2, -building.height / 2, building.width, building.height);
@@ -648,51 +736,66 @@ function renderGame() {
   
   // Отрисовка пуль
   gameState.bullets.forEach(bullet => {
-    const beamLength = 10;
-    const endX = bullet.x - Math.cos(bullet.angle) * beamLength;
-    const endY = bullet.y - Math.sin(bullet.angle) * beamLength;
-    const bulletColor = bullet.color ? bullet.color : "255,255,0";
-    const gradient = ctx.createLinearGradient(bullet.x, bullet.y, endX, endY);
-    gradient.addColorStop(0, "rgba(" + bulletColor + ",1)");
-    gradient.addColorStop(1, "rgba(" + bulletColor + ",0)");
-    ctx.strokeStyle = gradient;
-    ctx.lineWidth = 2;
+  const beamLength = 10;
+  const endX = bullet.x - Math.cos(bullet.angle) * beamLength;
+  const endY = bullet.y - Math.sin(bullet.angle) * beamLength;
+
+  // Защитная проверка, чтобы все значения были конечными
+  if (!isFinite(bullet.x) || !isFinite(bullet.y) || !isFinite(endX) || !isFinite(endY)) {
+    return; // Пропускаем эту пулю
+  }
+  
+  const bulletColor = bullet.color ? bullet.color : "255,255,0";
+  const gradient = ctx.createLinearGradient(bullet.x, bullet.y, endX, endY);
+  gradient.addColorStop(0, "rgba(" + bulletColor + ",1)");
+  gradient.addColorStop(1, "rgba(" + bulletColor + ",0)");
+  ctx.strokeStyle = gradient;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(bullet.x, bullet.y);
+  ctx.lineTo(endX, endY);
+  ctx.stroke();
+});
+
+// Отрисовка лазерных лучей для elite
+const currentTime = performance.now();
+gameState.units.forEach(unit => {
+  if (unit.type === "elite" && unit.laserBeam && (currentTime - unit.laserBeam.timestamp < 100)) {
+    ctx.save();
+    ctx.strokeStyle = "rgba(255,0,0,0.6)";
+    ctx.lineWidth = 4;
     ctx.beginPath();
-    ctx.moveTo(bullet.x, bullet.y);
-    ctx.lineTo(endX, endY);
+    ctx.moveTo(unit.laserBeam.startX, unit.laserBeam.startY);
+    ctx.lineTo(unit.laserBeam.endX, unit.laserBeam.endY);
     ctx.stroke();
-  });
-  
-  // Отрисовка лазерных лучей для elite
-  const currentTime = performance.now();
-  gameState.units.forEach(unit => {
-    if (unit.type === "elite" && unit.laserBeam && (currentTime - unit.laserBeam.timestamp < 100)) {
-      ctx.save();
-      ctx.strokeStyle = "rgba(255,0,0,0.6)";
-      ctx.lineWidth = 4;
-      ctx.beginPath();
-      ctx.moveTo(unit.laserBeam.startX, unit.laserBeam.startY);
-      ctx.lineTo(unit.laserBeam.endX, unit.laserBeam.endY);
-      ctx.stroke();
-      ctx.restore();
-    }
-  });
-  
-  // Отрисовка частиц
-  gameState.particles.forEach(p => {
-    const alpha = p.life / p.maxLife;
-    ctx.fillStyle = p.color;
-    ctx.globalAlpha = alpha;
-    ctx.beginPath();
-    ctx.arc(p.x, p.y, 2, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.globalAlpha = 1;
-  });
+    ctx.restore();
+  }
+});
+
+// Отрисовка частиц
+gameState.particles.forEach(p => {
+  const alpha = p.life / p.maxLife;
+  ctx.fillStyle = p.color;
+  ctx.globalAlpha = alpha;
+  ctx.beginPath();
+  ctx.arc(p.x, p.y, 2, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.globalAlpha = 1;
+});
+
 
   
   ctx.restore();
+	
+	// Если нужно отобразить динамичный туман:
+  renderFogOfWar();
+
+  // Если нужно отобразить постоянный туман:
+  renderPersistentFog();
   checkVictoryConditions();
-  
+  updateBaseNavButton();
+  updateBase2NavButton();
+  updateBase3NavButton();
 }
 
 // Функция отрисовки ресурсов с эффектами вращения и пульсации
@@ -822,7 +925,9 @@ function moveUnit(unit, targetX, targetY, callback, spreadDone = false) {
 
 function updateUnits(deltaTime) {
   gameState.units.forEach(unit => {
-    //if (unit.hidden) return;
+    // Пропускаем скрытые юниты (если нужно)
+    // if (unit.hidden) return;
+    
     if (unit.commandQueue.length === 0) {
       unit.idleTimer += deltaTime;
       if (unit.type === "worker" && unit.idleTimer >= 20) {
@@ -831,145 +936,67 @@ function updateUnits(deltaTime) {
         unit.idleTimer = 0;
       }
       if (unit.type === "repairman" && unit.idleTimer >= 20 && !unit.hiding) {
-  // Если ремонтник выбран игроком, авто-режим не запускаем
-  if (selectedUnits.includes(unit) || unit.manualOverride) {
-    unit.idleTimer = 0;
-  } else {
-    let workshops = gameState.buildings.filter(b => b.owner === unit.owner && b.type === "repairWorkshop");
-    if (workshops.length > 0) {
-      workshops.sort((a, b) =>
-        Math.hypot(unit.x - a.x, unit.y - a.y) - Math.hypot(unit.x - b.x, unit.y - b.y)
-      );
-      let nearestWorkshop = workshops[0];
-      const distance = Math.hypot(unit.x - nearestWorkshop.x, unit.y - nearestWorkshop.y);
-      const threshold = 50; // пороговое расстояние, можно настроить
-      
-      if (distance > threshold) {
-        // Сначала плавно двигаем ремонтника к мастерской
-        moveUnit(unit, nearestWorkshop.x, nearestWorkshop.y, () => {
-          // Когда ремонтник приблизился, запускаем анимацию "скрытия"
-          unit.hiding = true;
-          animateMoveAndScale(unit, nearestWorkshop.x, nearestWorkshop.y, 0, 1000, () => {
-            unit.hidden = true;
-            unit.hiding = false;
-            unit.inWorkshop = nearestWorkshop;
-            unit.idleTimer = 0;
-          });
-        });
-      } else {
-        // Если уже близко, сразу запускаем анимацию "скрытия"
-        unit.hiding = true;
-        animateMoveAndScale(unit, nearestWorkshop.x, nearestWorkshop.y, 0, 1000, () => {
-          unit.hidden = true;
-          unit.hiding = false;
-          unit.inWorkshop = nearestWorkshop;
+        if (selectedUnits.includes(unit) || unit.manualOverride) {
           unit.idleTimer = 0;
-        });
-      }
-    }
-  }
-}
-
-    }
-    if (unit.commandQueue.length > 0) processCommandQueue(unit);
-  });
-	
-	 updateSwarmBehavior(deltaTime) 
-	
-	function getRandomTargetPoint(centerX, centerY, radius) {
-  const angle = Math.random() * 2 * Math.PI;
-  const r = Math.random() * radius;
-  return {
-    x: centerX + r * Math.cos(angle),
-    y: centerY + r * Math.sin(angle)
-  };
-}
-
-	
-	function updateSwarmBehavior(deltaTime) {
-  // Параметры для когезии и выравнивания (значения подбирайте экспериментально)
-  const neighborRadius = 15; // радиус поиска соседей (в мировых координатах)
-  const cohesionFactor = 0.05; // влияние стремления к центру масс соседей
-  const alignmentFactor = 0.05; // влияние выравнивания направления
-  // Параметры для отделения (separation)
-  const separationDistance = 20; // минимальное расстояние между юнитами (в мировых координатах)
-  const separationSmoothing = 1;
-  
-  // Этап 1: когезия и выравнивание.
-  // Для каждого юнита вычисляем центр масс и среднее направление его соседей.
-  gameState.units.forEach(unit => {
-    // Рассчитываем для юнитов одного владельца
-    let sumX = 0, sumY = 0, sumAngle = 0, count = 0;
-    gameState.units.forEach(other => {
-      if (unit === other || unit.owner !== other.owner) return;
-      const dx = other.x - unit.x;
-      const dy = other.y - unit.y;
-      const dist = Math.hypot(dx, dy);
-      if (dist < neighborRadius) {
-        sumX += other.x;
-        sumY += other.y;
-        sumAngle += other.angle;
-        count++;
-      }
-    });
-    if (count > 0) {
-      const centerX = sumX / count;
-      const centerY = sumY / count;
-      const avgAngle = sumAngle / count;
-      // Когезия: стремление двигаться к центру масс соседей
-      const desiredAngle = Math.atan2(centerY - unit.y, centerX - unit.x);
-      // Применяем линейную интерполяцию угла (функция lerpAngle должна быть определена)
-      unit.angle = lerpAngle(unit.angle, desiredAngle, cohesionFactor * deltaTime);
-      // Выравнивание: плавное приближение к среднему направлению соседей
-      unit.angle = lerpAngle(unit.angle, avgAngle, alignmentFactor * deltaTime);
-    }
-  });
-  
-  // Этап 2: отделение (separation) – предотвращаем слишком близкое сближение юнитов
-  for (let i = 0; i < gameState.units.length; i++) {
-    for (let j = i + 1; j < gameState.units.length; j++) {
-      const unit = gameState.units[i];
-      const other = gameState.units[j];
-      if (unit.owner === other.owner) {
-        const dx = unit.x - other.x;
-        const dy = unit.y - other.y;
-        const dist = Math.hypot(dx, dy);
-        if (dist < separationDistance && dist > 0) {
-          const overlap = separationDistance - dist;
-          // Применяем только часть смещения за кадр
-          const adjustment = (overlap * separationSmoothing * deltaTime) / 2;
-          const adjustX = (dx / dist) * adjustment;
-          const adjustY = (dy / dist) * adjustment;
-          unit.x += adjustX;
-          unit.y += adjustY;
-          other.x -= adjustX;
-          other.y -= adjustY;
+        } else {
+          let workshops = gameState.buildings.filter(b => b.owner === unit.owner && b.type === "repairWorkshop");
+          if (workshops.length > 0) {
+            workshops.sort((a, b) =>
+              Math.hypot(unit.x - a.x, unit.y - a.y) - Math.hypot(unit.x - b.x, unit.y - b.y)
+            );
+            let nearestWorkshop = workshops[0];
+            const distance = Math.hypot(unit.x - nearestWorkshop.x, unit.y - nearestWorkshop.y);
+            const threshold = 50; // пороговое расстояние
+            if (distance > threshold) {
+              moveUnit(unit, nearestWorkshop.x, nearestWorkshop.y, () => {
+                unit.hiding = true;
+                animateMoveAndScale(unit, nearestWorkshop.x, nearestWorkshop.y, 0, 1000, () => {
+                  unit.hidden = true;
+                  unit.hiding = false;
+                  unit.inWorkshop = nearestWorkshop;
+                  unit.idleTimer = 0;
+                });
+              });
+            } else {
+              unit.hiding = true;
+              animateMoveAndScale(unit, nearestWorkshop.x, nearestWorkshop.y, 0, 1000, () => {
+                unit.hidden = true;
+                unit.hiding = false;
+                unit.inWorkshop = nearestWorkshop;
+                unit.idleTimer = 0;
+              });
+            }
+          }
         }
       }
     }
-  }
-}
-gameState.units = gameState.units.filter(unit => {
-  if (unit.health <= 0) {
-    if (unit.type === "worker" && unit.homeWarehouse) {
-      unit.homeWarehouse.workers = Math.max(0, unit.homeWarehouse.workers - 1);
+    if (unit.commandQueue.length > 0) processCommandQueue(unit);
+  });
+  
+  // Удаляем юниты с нулевым или отрицательным здоровьем и запускаем эффекты смерти
+  gameState.units = gameState.units.filter(unit => {
+    if (unit.health <= 0) {
+      removeUnit(unit);
+      return false;
     }
-    if (unit.type === "repairman" && unit.homeWorkshop) {
-      unit.homeWorkshop.repairman = Math.max(0, unit.homeWorkshop.repairman - 1);
-    }
-    return false;
-  }
-  return true;
-});
-
-
+    return true;
+  });
+  
+  updateSwarmBehavior(deltaTime);
 }
+
 
 function findNearestResource(x, y, preferredType) {
-  let filtered = gameState.resources.filter(r => r.amount > 0 && r.type === preferredType);
-  if (filtered.length === 0) filtered = gameState.resources.filter(r => r.amount > 0);
+  const pos = { x, y };
+  // Ищем ресурсы в фиксированном радиусе (например, 200 единиц)
+  let candidates = getObjectsInRange(pos, 1000)
+    .filter(r => r.amount > 0 && r.type === preferredType);
+  if (candidates.length === 0) {
+    candidates = getObjectsInRange(pos, 1000)
+      .filter(r => r.amount > 0);
+  }
   let nearest = null, minDist = Infinity;
-  filtered.forEach(r => {
+  candidates.forEach(r => {
     const d = Math.hypot(r.x - x, r.y - y);
     if (d < minDist) { minDist = d; nearest = r; }
   });
@@ -984,57 +1011,91 @@ function getPreferredResourceType(owner) {
   return "plasma";
 }
 
-function startWorkerCycle(unit, base) {
-  if (!unit || !gameState.units.includes(unit) || unit.health <= 0) return;
+function startWorkerCycle(worker, warehouse) {
+  // Если рабочий не существует или мёртв, завершаем цикл
+  if (!worker || worker.health <= 0 || !gameState.units.includes(worker)) return;
 
-  // Если включён режим ручного управления, автосбор не запускается
-  if (unit.manualOverride) return;
+  // Если рабочий уже что-то несёт, направляем его к ближайшему зданию для доставки
+  if (worker.carrying > 0) {
+    const deliveryBuilding = findNearestDeliveryBuilding(worker.x, worker.y, worker.owner);
+    if (deliveryBuilding) {
+      moveUnit(worker, deliveryBuilding.x, deliveryBuilding.y, () => {
+        const resourceType = getPreferredResourceType(worker.owner);
+        if (worker.owner === "player")
+          gameState.playerResources[resourceType] += worker.carrying;
+        else
+          gameState.aiResources[resourceType] += worker.carrying;
+        worker.carrying = 0;
+        setTimeout(() => startWorkerCycle(worker, warehouse), 1000);
+      });
+      return;
+    }
+  }
 
-  // Если в очереди уже есть команда, отличная от автосбора, не запускаем автосбор
-  if (unit.commandQueue.length > 0 && unit.commandQueue[0].type !== "gather") return;
+  // Определяем нужный тип ресурса для рабочего
+  const resourceType = getPreferredResourceType(worker.owner);
+  const resource = findNearestResource(worker.x, worker.y, resourceType);
 
-  const preferredType = getPreferredResourceType(unit.owner);
-  const target = findNearestResource(unit.x, unit.y, preferredType);
-
-  if (!target) {
-    setTimeout(() => {
-      if (!unit.manualOverride) startWorkerCycle(unit, base);
-    }, 5000);
+  // Если ресурс отсутствует или его количество равно нулю, ждем и пробуем снова через задержку
+  if (!resource || resource.amount <= 0) {
+    //console.log("Ресурс недоступен или исчерпан, рабочий ждёт...", worker);
+    setTimeout(() => startWorkerCycle(worker, warehouse), 1000);
     return;
   }
 
-  moveUnit(unit, target.x, target.y, () => {
-    if (target.amount > 0) {
-      target.amount--;
-      unit.carrying = (unit.carrying || 0) + 10;
+	
+	
+  // Вычисляем расстояние до ресурса и динамический таймаут
+  const distance = Math.hypot(resource.x - worker.x, resource.y - worker.y);
+  // Базовое время (например, 5000 мс) плюс 10 мс на каждую единицу расстояния (коэффициент можно подобрать)
+  const maxTravelTime = 10000 + distance * 10;
+  let reached = false;
+  const travelTimeout = setTimeout(() => {
+    if (!reached) {
+      //console.log("Рабочий не добрался до ресурса за", maxTravelTime, "мс, возвращается к складу.");
+      const deliveryBuilding = findNearestDeliveryBuilding(worker.x, worker.y, worker.owner);
+      if (deliveryBuilding) {
+        moveUnit(worker, deliveryBuilding.x, deliveryBuilding.y, () => {
+          setTimeout(() => startWorkerCycle(worker, warehouse), 1000);
+        });
+      } else {
+        setTimeout(() => startWorkerCycle(worker, warehouse), 1000);
+      }
+    }
+  }, maxTravelTime);
+
+  // Двигаем рабочего к ресурсу
+  moveUnit(worker, resource.x, resource.y, () => {
+    reached = true;  // рабочий добрался до цели
+    clearTimeout(travelTimeout);
+
+    // Прибыв, проверяем снова ресурс (на случай, если он исчез за время движения)
+    if (resource.amount > 0) {
+      resource.amount--;
+      worker.carrying = (worker.carrying || 0) + 10;
+    } else {
+      console.log("Ресурс исчез во время сбора, перезапуск цикла рабочего.");
+      setTimeout(() => startWorkerCycle(worker, warehouse), 1000);
+      return;
     }
 
-    const deliveryBuilding = findNearestDeliveryBuilding(unit.x, unit.y, unit.owner);
+    // После сбора направляем рабочего к ближайшему зданию для доставки
+    const deliveryBuilding = findNearestDeliveryBuilding(worker.x, worker.y, worker.owner);
     if (deliveryBuilding) {
-      moveUnit(unit, deliveryBuilding.x, deliveryBuilding.y, () => {
-        if (unit.carrying > 0) {
-          if (unit.owner === "player")
-            gameState.playerResources[target.type] += unit.carrying;
-          else
-            gameState.aiResources[target.type] += unit.carrying;
-          unit.carrying = 0;
-        }
-        // Если очередь пуста и ручной режим не активен, продолжаем автосбор
-        if (unit.commandQueue.length === 0 && !unit.manualOverride) {
-          setTimeout(() => {
-            if (!unit.manualOverride) startWorkerCycle(unit, base);
-          }, 1000);
-        }
+      moveUnit(worker, deliveryBuilding.x, deliveryBuilding.y, () => {
+        if (worker.owner === "player")
+          gameState.playerResources[resourceType] += worker.carrying;
+        else
+          gameState.aiResources[resourceType] += worker.carrying;
+        worker.carrying = 0;
+        setTimeout(() => startWorkerCycle(worker, warehouse), 1000);
       });
     } else {
-      if (unit.commandQueue.length === 0 && !unit.manualOverride) {
-        setTimeout(() => {
-          if (!unit.manualOverride) startWorkerCycle(unit, base);
-        }, 1000);
-      }
+      setTimeout(() => startWorkerCycle(worker, warehouse), 1000);
     }
   });
 }
+
 
 function fireBullet(shooter, enemy) {
   if (!shooter || shooter.health <= 0) return;
@@ -1056,13 +1117,14 @@ function fireBullet(shooter, enemy) {
     } else if (shooter.type === "fighter") {
       bulletConfig = FIGHTER_BULLET_CONFIG;
     } else {
-      bulletConfig = { speed: 300, lifetime: 1.5 };
+      bulletConfig = { speed: 300, lifetime: 1.5, damage: 10 };
     }
     bullet = new Bullet(shooter.x, shooter.y, angle, bulletConfig.speed, shooter, enemy);
     bullet.lifetime = bulletConfig.lifetime;
+    bullet.damage = bulletConfig.damage;
   }
   if (shooter.type === "assault") {
-    bullet.color = "128,0,128"; // Фиолетовый цвет для пулемёта штурмовика
+    bullet.color = "128,0,128"; // Фиолетовый для штурмовика
   }
   gameState.bullets.push(bullet);
 }
@@ -1121,39 +1183,35 @@ function isTargetAlive(target) {
 }
 
 function startTurretCycle(turret) {
-  if (!turret) return;
+  turret.lastFireTime = 0;
   function cycle() {
     if (turret.health <= 0) return;
-    if (turret.target) {
-      let d = Math.hypot(turret.target.x - turret.x, turret.target.y - turret.y);
-      if (d > turret.range || turret.target.health <= 0) turret.target = null;
-    }
-    if (!turret.target) {
-      const candidates = getEnemiesInRange({ x: turret.x, y: turret.y }, turret.range);
-      let minDist = Infinity;
-      candidates.forEach(obj => {
-        if (obj.owner !== turret.owner) {
-          if (obj instanceof Building && obj.type === "base") return;
-          let d = Math.hypot(obj.x - turret.x, obj.y - turret.y);
-          if (d < minDist && d <= turret.range) { minDist = d; turret.target = obj; }
-        }
-      });
-    }
-    if (turret.target) {
-      let desiredAngle = Math.atan2(turret.target.y - turret.y, turret.target.x - turret.x);
-      let angleDiff = desiredAngle - turret.angle;
-      angleDiff = ((angleDiff + Math.PI) % (5 * Math.PI)) - Math.PI;
-      let turnSpeed = (Math.abs(angleDiff) > 1) ? 0.5 : 0.05;
-      turret.angle += angleDiff * turnSpeed;
-      if (Math.abs(angleDiff) < 2 && performance.now() - turret.lastFireTime >= turret.fireRate) {
-        fireBullet(turret, turret.target);
-        turret.lastFireTime = performance.now();
+    
+    // Если цель недействительна (отсутствует, мертва или слишком далеко), ищем новую
+    if (!turret.target || turret.target.health <= 0 ||
+       (Math.hypot(turret.target.x - turret.x, turret.target.y - turret.y) > turret.range)) {
+      const candidates = getEnemiesInRange({ x: turret.x, y: turret.y }, turret.range, turret.owner);
+      if (candidates.length > 0) {
+        turret.target = candidates[0];
+      } else {
+        turret.target = null;
       }
-    } else turret.angle += 0.01;
-    setTimeout(cycle, 100);
+    }
+    
+    // Если цель найдена, стрелять с учетом fireRate
+    if (turret.target) {
+      const now = performance.now();
+      if (now - turret.lastFireTime >= turret.fireRate) {
+        fireBullet(turret, turret.target);
+        turret.lastFireTime = now;
+      }
+    }
+    
+    requestAnimationFrame(cycle);
   }
   cycle();
 }
+
 
 function drawCircularHP(x, y, radius, health, maxHealth) {
   const startAngle = -Math.PI / 2;

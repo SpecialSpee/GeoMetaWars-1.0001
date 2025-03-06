@@ -171,28 +171,14 @@ function attachWallEventListeners(zone) {
 function processCanvasClick(pos) {
   clearBuildZones();
   const worldPos = screenToWorld(pos.x, pos.y);
-  const selectedRepairman = selectedUnits.find(u => u.type === "repairman");
-  if (selectedRepairman) {
-    const clickedResource = gameState.resources.find(r =>
-      Math.hypot(r.x - worldPos.x, r.y - worldPos.y) < 10
-    );
-    if (clickedResource) return;
-    const clickedBuilding = gameState.buildings.find(b =>
-      b.owner === "player" &&
-      worldPos.x >= b.x - b.width / 2 && worldPos.x <= b.x + b.width / 2 &&
-      worldPos.y >= b.y - b.height / 2 && worldPos.y <= b.y + b.height / 2
-    );
-    // Можно добавить дополнительную логику для ремонта здесь
-  }
   
-  const clickedResource = gameState.resources.find(r =>
-    Math.hypot(r.x - worldPos.x, r.y - worldPos.y) < 10
-  );
-  const clickedBuilding = gameState.buildings.find(b =>
-    b.owner === "player" &&
-    worldPos.x >= b.x - b.width / 2 && worldPos.x <= b.x + b.width / 2 &&
-    worldPos.y >= b.y - b.height / 2 && worldPos.y <= b.y + b.height / 2
-  );
+  // Поиск ресурса через квадродерево
+  const clickedResource = getObjectsInRange(worldPos, 10)
+    .find(r => (r.type === "gold" || r.type === "silicon" || r.type === "plasma"));
+    
+  // Поиск здания через квадродерево
+  const clickedBuilding = getObjectsInRange(worldPos, 10)
+    .find(b => b.owner === "player" && b instanceof Building);
   
   if (clickedBuilding) {
     if (clickedBuilding.type === "warehouse") { hireWorkerForPlayer(clickedBuilding); return; }
@@ -203,8 +189,7 @@ function processCanvasClick(pos) {
       return;
     }
     if (clickedBuilding.type === "barracks3") { hireEliteForPlayer(clickedBuilding); return; }
-    if (clickedBuilding.type === "base" || clickedBuilding.type === "base2" ||
-        clickedBuilding.type === "base3" || clickedBuilding.type === "beacon") {
+    if (["base", "base2", "base3", "beacon"].includes(clickedBuilding.type)) {
       showBuildingMenu(clickedBuilding);
       return;
     }
@@ -221,10 +206,8 @@ function processCanvasClick(pos) {
   }
   
   const unitRadius = 5;
-  const clickedUnit = gameState.units.find(u =>
-    u.owner === "player" &&
-    Math.hypot(u.x - worldPos.x, u.y - worldPos.y) < unitRadius
-  );
+  const clickedUnit = getObjectsInRange(worldPos, unitRadius)
+    .find(u => u.owner === "player" && u instanceof Unit);
   if (clickedUnit) {
     selectedUnits = [clickedUnit];
   } else if (selectedUnits.length > 0) {
@@ -239,6 +222,7 @@ function processCanvasClick(pos) {
     });
   }
 }
+
   
 // Клики мышью и touch (для одиночного касания)
 canvas.addEventListener("click", e => {
@@ -298,42 +282,6 @@ canvas.addEventListener("contextmenu", e => {
   }
 });
   
-// Функция выделения рамкой (selection box)
-function startSelectionFrame(initialEvent) {
-  const startX = initialEvent.clientX, startY = initialEvent.clientY;
-  const selectionBox = document.createElement("div");
-  selectionBox.className = "selectionBox";
-  selectionBox.style.position = "absolute";
-  selectionBox.style.border = "1px dashed #00FF00";
-  selectionBox.style.backgroundColor = "rgba(0,255,0,0.2)";
-  selectionBox.style.left = startX + "px";
-  selectionBox.style.top = startY + "px";
-  selectionBox.style.zIndex = "1000";
-  document.body.appendChild(selectionBox);
-  function onMouseMove(e) {
-    const currentX = e.clientX, currentY = e.clientY;
-    const left = Math.min(startX, currentX), top = Math.min(startY, currentY);
-    const width = Math.abs(startX - currentX), height = Math.abs(startY - currentY);
-    selectionBox.style.left = left + "px";
-    selectionBox.style.top = top + "px";
-    selectionBox.style.width = width + "px";
-    selectionBox.style.height = height + "px";
-  }
-  function onMouseUp(e) {
-    document.removeEventListener("mousemove", onMouseMove);
-    document.removeEventListener("mouseup", onMouseUp);
-    const rect = selectionBox.getBoundingClientRect();
-    selectedUnits = gameState.units.filter(u => {
-      if (u.owner !== "player") return false;
-      const screenPos = worldToScreen(u.x, u.y);
-      return (screenPos.x >= rect.left && screenPos.x <= rect.right &&
-              screenPos.y >= rect.top && screenPos.y <= rect.bottom);
-    });
-    selectionBox.remove();
-  }
-  document.addEventListener("mousemove", onMouseMove);
-  document.addEventListener("mouseup", onMouseUp);
-}
 
 // Функция, вызывающая ремонтников из мастерской по клику
 function recallRepairmenFromWorkshop(workshop) {
@@ -449,174 +397,78 @@ function enemyNear(building, radius) {
 function removeUnit(unit) {
   const unitWidth = unit.width || 10;
   const unitHeight = unit.height || 10;
-  // Получаем цвет для данного типа юнита; если типа нет — используем "red"
-  const fragColor = fragmentColors[unit.type] || "red";
-  spawnDestructionFragments(unit.x, unit.y, unitWidth, unitHeight, fragColor);
+  // Создаем эффект разрушения
+  spawnDestructionFragments(unit.x, unit.y, unitWidth, unitHeight, unit.type);
+ // console.log(`Юнит ${unit.type} уничтожен.`);
   
-  // Корректируем счетчики, если нужно
+  // Если это рабочий, уменьшаем счётчик в homeWarehouse
   if (unit.type === "worker" && unit.homeWarehouse) {
     unit.homeWarehouse.workers = Math.max(0, unit.homeWarehouse.workers - 1);
   }
+  
+  // Если это ремонтник, уменьшаем счётчик в мастерской
   if (unit.type === "repairman" && unit.homeWorkshop) {
     unit.homeWorkshop.repairman = Math.max(0, unit.homeWorkshop.repairman - 1);
   }
-  // Удаляем юнита из gameState
+  // Если военный юнит – fighter, assault, elite – уменьшаем militaryCount в соответствующем здании
+  if ((unit.type === "fighter" || unit.type === "assault" || unit.type === "elite") && unit.homeBuilding) {
+    unit.homeBuilding.militaryCount = Math.max(0, unit.homeBuilding.militaryCount - 1);
+  }
+  
+  // Удаляем юнита из глобального массива
   gameState.units = gameState.units.filter(u => u !== unit);
-  selectedUnits = selectedUnits.filter(u => u !== unit);
 }
-
-
+  // Остальная логика удаления юнита из gameState.units (обычно через фильтрацию)
 
 function updateGameState(deltaTime) {
+  // Обновляем квадродерево: очищаем и заново вставляем объекты
+  quadtree.clear();
+  gameState.buildings.forEach(b => quadtree.insert(b));
+  gameState.units.forEach(u => quadtree.insert(u));
+  gameState.resources.forEach(r => quadtree.insert(r));
+
+  // Обновляем игровые объекты
   updateUnits(deltaTime);
   updateResources(deltaTime);
-  
-  gameState.bullets.forEach(bullet => {
-    if (bullet.isArtillery) {
-      bullet.x += Math.cos(bullet.angle) * bullet.speed * deltaTime;
-      bullet.y += Math.sin(bullet.angle) * bullet.speed * deltaTime;
-      bullet.lifetime -= deltaTime;
-      const potentialTargets = gameState.units.concat(gameState.buildings)
-        .filter(obj => obj.owner !== bullet.shooter.owner && obj.health > 0);
-      for (let obj of potentialTargets) {
-        let collisionThreshold = (obj instanceof Building) ? obj.width / 2 : 8;
-        if (Math.hypot(bullet.x - obj.x, bullet.y - obj.y) < collisionThreshold) {
-          const splashTargets = getEnemiesInRange({ x: bullet.x, y: bullet.y }, bullet.splashRadius);
-          splashTargets.forEach(target => {
-            target.health -= bullet.splashDamage;
-            if (target.health <= 0) {
-              if (target instanceof Building) {
-                spawnParticles(target.x, target.y, "green");
-                gameState.buildings = gameState.buildings.filter(b => b !== target);
-                if (target === aiBase) { aiBase = null; }
-              } else if (target instanceof Unit) {
-                removeUnit(target);
-              }
-            }
-          });
-          bullet.alive = false;
-          spawnParticles(bullet.x, bullet.y, "green");
-          break;
-        }
-      }
-    } else if (bullet.isMissile) {
-  if (bullet.target && bullet.target.health > 0) {
-    const desiredAngle = Math.atan2(bullet.target.y - bullet.y, bullet.target.x - bullet.x);
-    bullet.angle = lerpAngle(bullet.angle, desiredAngle, 0.07);
-  }
-  bullet.x += Math.cos(bullet.angle) * bullet.speed * deltaTime;
-  bullet.y += Math.sin(bullet.angle) * bullet.speed * deltaTime;
-  bullet.lifetime -= deltaTime;
-  if (bullet.lifetime <= 0) {
-    bullet.alive = false;
-  }
-
-      const potentialTargets = gameState.units.concat(gameState.buildings)
-        .filter(obj => obj.owner !== bullet.shooter.owner && obj.health > 0);
-      for (let obj of potentialTargets) {
-        let collisionThreshold = (obj instanceof Building) ? obj.width / 2 : 8;
-        if (Math.hypot(bullet.x - obj.x, bullet.y - obj.y) < collisionThreshold) {
-          obj.health -= bullet.damage;
-          const splashTargets = getEnemiesInRange({ x: bullet.x, y: bullet.y }, bullet.splashRadius);
-          splashTargets.forEach(target => {
-            if (target.owner !== bullet.shooter.owner && target !== obj && target.health > 0) {
-              target.health -= bullet.splashDamage;
-              if (target.health <= 0) {
-                if (target instanceof Building) {
-                  spawnParticles(target.x, target.y, "red");
-                  gameState.buildings = gameState.buildings.filter(b => b !== target);
-                  if (target === aiBase) { aiBase = null; }
-                } else if (target instanceof Unit) {
-                  removeUnit(target);
-                }
-              }
-            }
-          });
-          bullet.alive = false;
-          spawnParticles(bullet.x, bullet.y, "orange");
-          if (obj.health <= 0) {
-            if (obj instanceof Unit) {
-              removeUnit(obj);
-            } else if (obj instanceof Building) {
-              spawnParticles(obj.x, obj.y, "red");
-              gameState.buildings = gameState.buildings.filter(b => b !== obj);
-              if (obj === aiBase) { aiBase = null; }
-            }
-          }
-          break;
-        }
-      }
-    } else {
-      bullet.x += Math.cos(bullet.angle) * bullet.speed * deltaTime;
-      bullet.y += Math.sin(bullet.angle) * bullet.speed * deltaTime;
-      bullet.lifetime -= deltaTime;
-      if (bullet.lifetime <= 0) bullet.alive = false;
-      const enemyUnits = gameState.units.filter(u => u.owner !== bullet.shooter.owner && u.health > 0);
-      for (let unit of enemyUnits) {
-        const d = Math.hypot(bullet.x - unit.x, bullet.y - unit.y);
-        if (d < 8) {
-          bullet.alive = false;
-          unit.health -= bullet.damage;
-          if (unit.health < 0) unit.health = 0;
-          spawnParticles(bullet.x, bullet.y, "orange");
-          if (unit.health <= 0) {
-            spawnParticles(unit.x, unit.y, "red");
-            removeUnit(unit);
-          }
-          break;
-        }
-      }
-      const enemyBuildings = gameState.buildings.filter(b => b.owner !== bullet.shooter.owner && b.health > 0);
-      for (let building of enemyBuildings) {
-        const d = Math.hypot(bullet.x - building.x, bullet.y - building.y);
-        if (d < building.width / 2) {
-          bullet.alive = false;
-          building.health -= bullet.damage;
-          if (building.health < 0) building.health = 0;
-          spawnParticles(bullet.x, bullet.y, "orange");
-          // В блоке уничтожения здания (например, при коллизии пули с зданием)
-	if (building.health <= 0) {
-	  spawnParticles(building.x, building.y, "red");
-	  // Здесь используем цвет для зданий из словаря:
-		spawnDestructionFragments(building.x, building.y, 	building.width, building.height, fragmentColors["building"]);
- 	 gameState.buildings = gameState.buildings.filter(b => b !== 	building);
- 	 if (building === aiBase) { aiBase = null; }
-}
-          break;
-        }
-      }
-    }
-  });
-  
-  gameState.bullets = gameState.bullets.filter(b => b.alive);
-  gameState.particles.forEach(p => {
-    p.x += p.vx * deltaTime;
-    p.y += p.vy * deltaTime;
-    p.life -= deltaTime;
-  });
-  gameState.particles = gameState.particles.filter(p => p.life > 0);
-  updateResourceUI();
-  processResourceDepletion();
-  updateBaseNavButton();
-  updateBase2NavButton();
-  updateBase3NavButton();
-  autoRepairDamagedObjects();
+  updateBullets(deltaTime);
+  updateFragments(deltaTime);
+  updateFogOfWar();
 }
 
 function gameLoop(time) {
   const deltaTime = (time - lastTime) / 1000;
   lastTime = time;
-  updateGameState(deltaTime);
-  renderGame();
-  //updateFogOfWar();
-  updateBullets(deltaTime);
-  updateFragments(deltaTime); // обновляем фрагменты
   
-  // После отрисовки остальных объектов — отрисовываем фрагменты
+  // 1. Обновляем динамические объекты (движение, эффекты, туман)
+  updateUnits(deltaTime);
+  updateResources(deltaTime);
+  updateFragments(deltaTime);
+  updateFogOfWar();
+  
+  // 2. Перестраиваем квадродерево с актуальными позициями
+  quadtree.clear();
+  gameState.buildings.forEach(b => quadtree.insert(b));
+  gameState.units.forEach(u => quadtree.insert(u));
+  gameState.resources.forEach(r => quadtree.insert(r));
+  
+  // 3. Обработка столкновений пуль (updateBullets вызывается один раз за кадр)
+  updateBullets(deltaTime);
+  
+  // 3.1 Запускаем авто-ремонт повреждённых объектов
+  autoRepairDamagedObjects();
+  
+  // Удаляем здания с нулевым или отрицательным здоровьем
+  gameState.buildings = gameState.buildings.filter(b => {
+    if (b.health <= 0) {
+      spawnDestructionFragments(b.x, b.y, b.width, b.height, b.type);
+      return false;
+    }
+    return true;
+  });
+    updateResourceUI();
+  // 4. Отрисовка
+  renderGame();
   drawFragments();
-  //renderFogOfWar();
-  //renderDynamicFog();
-  //renderPersistentFog();
   
   gameLoopId = requestAnimationFrame(gameLoop);
 }
@@ -823,8 +675,6 @@ function showBuildingMenu(building) {
   console.log("Зона для здания", building.type, "создана. Экранные координаты:", screenPos);
 }
 
-
-
 function clearBuildZones() {
   document.querySelectorAll(".buildZone").forEach(zone => zone.remove());
   const menu = document.getElementById("buildMenu");
@@ -931,53 +781,26 @@ function showSingleBuildZone(building, buildingType) {
 }
 
 function placeBuilding(x, y, buildingType, owner) {
-  // Проверка уникальности для некоторых типов построек (для базы первого типа не проверяем)
-  if (buildingType === "barracks") {
-    const existing = gameState.buildings.filter(b => b.owner === owner && b.type === "barracks");
-    if (existing.length >= 1) { showWarning("Казарма уже построена"); return; }
-  } else if (buildingType === "barracks2") {
-    const existing = gameState.buildings.filter(b => b.owner === owner && b.type === "barracks2");
-    if (existing.length >= 1) { showWarning("Казарма2 уже построена"); return; }
-  } else if (buildingType === "barracks3") {
-    const existing = gameState.buildings.filter(b => b.owner === owner && b.type === "barracks3");
-    if (existing.length >= 1) { showWarning("Казарма3 уже построена"); return; }
-  }
-
-  // Определяем размеры здания
-  let buildingWidth, buildingHeight;
-  if (buildingType === "warehouse") { 
-    buildingWidth = 10; buildingHeight = 10; 
-  } else if (buildingType === "barracks") { 
-    buildingWidth = 15; buildingHeight = 15; 
-  } else if (buildingType === "barracks2") { 
-    buildingWidth = 25; buildingHeight = 15; 
-  } else if (buildingType === "barracks3") { 
-    buildingWidth = 20; buildingHeight = 15; 
-  } else if (buildingType === "beacon") { 
-    buildingWidth = 5; buildingHeight = 20; 
-  } else if (buildingType === "turret") { 
-    buildingWidth = 12; buildingHeight = 12; 
-  } else if (buildingType === "turret2") { 
-    buildingWidth = 15; buildingHeight = 17; 
-  } else if (buildingType === "base2") {
-    buildingWidth = 25; buildingHeight = 30;
-  } else if (buildingType === "base3") {
-    buildingWidth = 30; buildingHeight = 30;
-  } else if (buildingType === "base") {
-    // База первого типа (base) – допустима даже если уже есть более продвинутые базы
-    buildingWidth = 20; buildingHeight = 20;
-  } else if (buildingType === "wall") {
-    buildingWidth = 40; buildingHeight = 10;
-  } else { 
-    buildingWidth = 20; buildingHeight = 20; 
-  }
-
-  // Проверка на пересечение с уже построенными объектами
+  // Проверка, что объект можно построить (пересечения и т.д.)
+  const buildingDimensions = {
+    warehouse: { width: 10, height: 10 },
+    repairWorkshop: { width: 10, height: 10 },
+    barracks: { width: 15, height: 15 },
+    turret: { width: 12, height: 12 },
+    turret2: { width: 15, height: 17 },
+    beacon: { width: 7, height: 20 },
+    base: { width: 20, height: 20 },
+    base2: { width: 25, height: 30 },
+    base3: { width: 30, height: 30 },
+    wall: { width: 40, height: 10 }
+  };
+  
+  const dims = buildingDimensions[buildingType] || { width: 20, height: 20 };
   const newRect = { 
-    left: x - buildingWidth / 2, 
-    top: y - buildingHeight / 2, 
-    right: x + buildingWidth / 2, 
-    bottom: y + buildingHeight / 2 
+    left: x - dims.width / 2, 
+    top: y - dims.height / 2, 
+    right: x + dims.width / 2, 
+    bottom: y + dims.height / 2 
   };
   for (let b of gameState.buildings) {
     const bRect = { 
@@ -988,132 +811,72 @@ function placeBuilding(x, y, buildingType, owner) {
     };
     if (rectsOverlap(newRect, bRect)) { 
       showWarning("Нельзя строить здания, накладывая их друг на друга"); 
-      return; 
+      return;
     }
   }
-
-  // Списываем ресурсы для построек игрока
+  
+  // Списание ресурсов – для игрока
   if (owner === "player") {
-    if (buildingType === "warehouse") {
-      if (gameState.playerResources.gold < WAREHOUSE_COST.gold ||
-          gameState.playerResources.silicon < WAREHOUSE_COST.silicon ||
-          gameState.playerResources.plasma < WAREHOUSE_COST.plasma) {
-        showWarning("Недостаточно ресурсов для строительства склада");
-        return;
-      }
-      gameState.playerResources.gold -= WAREHOUSE_COST.gold;
-      gameState.playerResources.silicon -= WAREHOUSE_COST.silicon;
-      gameState.playerResources.plasma -= WAREHOUSE_COST.plasma;
-    } else if (buildingType === "barracks") {
-      if (gameState.playerResources.gold < BARRACKS_COST.gold ||
-          gameState.playerResources.silicon < BARRACKS_COST.silicon ||
-          gameState.playerResources.plasma < BARRACKS_COST.plasma) {
-        showWarning("Недостаточно ресурсов для строительства казармы");
-        return;
-      }
-      gameState.playerResources.gold -= BARRACKS_COST.gold;
-      gameState.playerResources.silicon -= BARRACKS_COST.silicon;
-      gameState.playerResources.plasma -= BARRACKS_COST.plasma;
-    } else if (buildingType === "barracks2") {
-      if (gameState.playerResources.gold < BARRACKS2_COST.gold ||
-          gameState.playerResources.silicon < BARRACKS2_COST.silicon ||
-          gameState.playerResources.plasma < BARRACKS2_COST.plasma) {
-        showWarning("Недостаточно ресурсов для строительства казармы2");
-        return;
-      }
-      gameState.playerResources.gold -= BARRACKS2_COST.gold;
-      gameState.playerResources.silicon -= BARRACKS2_COST.silicon;
-      gameState.playerResources.plasma -= BARRACKS2_COST.plasma;
-    } else if (buildingType === "barracks3") {
-      if (gameState.playerResources.gold < BARRACKS3_COST.gold ||
-          gameState.playerResources.silicon < BARRACKS3_COST.silicon ||
-          gameState.playerResources.plasma < BARRACKS3_COST.plasma) {
-        showWarning("Недостаточно ресурсов для строительства казармы3");
-        return;
-      }
-      gameState.playerResources.gold -= BARRACKS3_COST.gold;
-      gameState.playerResources.silicon -= BARRACKS3_COST.silicon;
-      gameState.playerResources.plasma -= BARRACKS3_COST.plasma;
-    } else if (buildingType === "turret") {
-      if (gameState.playerResources.gold < TURRET_COST.gold ||
-          gameState.playerResources.silicon < TURRET_COST.silicon ||
-          gameState.playerResources.plasma < TURRET_COST.plasma) {
-        showWarning("Недостаточно ресурсов для строительства турели");
-        return;
-      }
-      gameState.playerResources.gold -= TURRET_COST.gold;
-      gameState.playerResources.silicon -= TURRET_COST.silicon;
-      gameState.playerResources.plasma -= TURRET_COST.plasma;
-    } else if (buildingType === "turret2") {
-      if (gameState.playerResources.gold < TURRET2_COST.gold ||
-          gameState.playerResources.silicon < TURRET2_COST.silicon ||
-          gameState.playerResources.plasma < TURRET2_COST.plasma) {
-        showWarning("Недостаточно ресурсов для строительства турели2");
-        return;
-      }
-      gameState.playerResources.gold -= TURRET2_COST.gold;
-      gameState.playerResources.silicon -= TURRET2_COST.silicon;
-      gameState.playerResources.plasma -= TURRET2_COST.plasma;
-    } else if (buildingType === "beacon") {
-      if (gameState.playerResources.gold < BEACON_COST.gold ||
-          gameState.playerResources.silicon < BEACON_COST.silicon ||
-          gameState.playerResources.plasma < BEACON_COST.plasma) {
-        showWarning("Недостаточно ресурсов для строительства маяка");
-        return;
-      }
-      gameState.playerResources.gold -= BEACON_COST.gold;
-      gameState.playerResources.silicon -= BEACON_COST.silicon;
-      gameState.playerResources.plasma -= BEACON_COST.plasma;
-    } else if (buildingType === "base2") {
-      if (gameState.playerResources.gold < BASE2_COST.gold ||
-          gameState.playerResources.silicon < BASE2_COST.silicon ||
-          gameState.playerResources.plasma < BASE2_COST.plasma) {
-        showWarning("Недостаточно ресурсов для строительства базы2");
-        return;
-      }
-      gameState.playerResources.gold -= BASE2_COST.gold;
-      gameState.playerResources.silicon -= BASE2_COST.silicon;
-      gameState.playerResources.plasma -= BASE2_COST.plasma;
-    } else if (buildingType === "base3") {
-      if (gameState.playerResources.gold < BASE3_COST.gold ||
-          gameState.playerResources.silicon < BASE3_COST.silicon ||
-          gameState.playerResources.plasma < BASE3_COST.plasma) {
-        showWarning("Недостаточно ресурсов для строительства базы3");
-        return;
-      }
-      gameState.playerResources.gold -= BASE3_COST.gold;
-      gameState.playerResources.silicon -= BASE3_COST.silicon;
-      gameState.playerResources.plasma -= BASE3_COST.plasma;
-    } else if (buildingType === "base") {
-      // База первого типа теперь доступна, даже если уже есть более продвинутые базы
-      if (gameState.playerResources.gold < BASE_COST.gold ||
-          gameState.playerResources.silicon < BASE_COST.silicon ||
-          gameState.playerResources.plasma < BASE_COST.plasma) {
-        showWarning("Недостаточно ресурсов для строительства базы");
-        return;
-      }
-      gameState.playerResources.gold -= BASE_COST.gold;
-      gameState.playerResources.silicon -= BASE_COST.silicon;
-      gameState.playerResources.plasma -= BASE_COST.plasma;
-    } else if (buildingType === "wall") {
-      if (gameState.playerResources.gold < WALL_COST.gold ||
-          gameState.playerResources.silicon < WALL_COST.silicon ||
-          gameState.playerResources.plasma < WALL_COST.plasma) {
-        showWarning("Недостаточно ресурсов для строительства стены");
-        return;
-      }
-      gameState.playerResources.gold -= WALL_COST.gold;
-      gameState.playerResources.silicon -= WALL_COST.silicon;
-      gameState.playerResources.plasma -= WALL_COST.plasma;
+    let cost;
+    switch(buildingType) {
+      case "warehouse":
+        cost = WAREHOUSE_COST;
+        break;
+      case "repairWorkshop":
+        cost = REPAIR_WORKSHOP_COST;
+        break;
+      case "barracks":
+        cost = BARRACKS_COST;
+        break;
+      case "turret":
+        cost = TURRET_COST;
+        break;
+      case "turret2":
+        cost = TURRET2_COST;
+        break;
+      case "beacon":
+        cost = BEACON_COST;
+        break;
+      case "base":
+        cost = BASE_COST;
+        break;
+      case "base2":
+        cost = BASE2_COST;
+        break;
+      case "base3":
+        cost = BASE3_COST;
+        break;
+      case "wall":
+        cost = WALL_COST;
+        break;
+      default:
+        cost = { gold: 0, silicon: 0, plasma: 0 };
     }
+    
+    if (gameState.playerResources.gold < cost.gold ||
+        gameState.playerResources.silicon < cost.silicon ||
+        gameState.playerResources.plasma < cost.plasma) {
+      showWarning("Недостаточно ресурсов для строительства");
+      return;
+    }
+    gameState.playerResources.gold -= cost.gold;
+    gameState.playerResources.silicon -= cost.silicon;
+    gameState.playerResources.plasma -= cost.plasma;
+    updateResourceUI();
   }
-  updateResourceUI();
+  
+  // Создаем здание и добавляем его в gameState
   const building = new Building(buildingType, owner, x, y);
-  // Сохраняем размеры здания для проверки пересечений
-  building.width = buildingWidth;
-  building.height = buildingHeight;
+  building.width = dims.width;
+  building.height = dims.height;
   gameState.buildings.push(building);
-  if (building.type === "turret" || building.type === "turret2") { 
-    startTurretCycle(building); 
+  
+  console.log(`Здание ${buildingType} построено ${owner} в координатах:`, { x, y });
+  
+  // Если игрок строит турель, можно также запустить цикл автоматической стрельбы:
+  if ((buildingType === "turret" || buildingType === "turret2") && owner === "player") {
+    startTurretCycle(building);
   }
+  
+  return building;
 }

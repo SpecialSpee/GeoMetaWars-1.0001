@@ -1,3 +1,131 @@
+
+
+// ============================
+// ==== Класс Quadtree ========
+// ============================
+function addUnit(unit) {
+  // Добавляем в общий список
+  gameState.units.push(unit);
+
+  // Если это боевой юнит, добавляем в attackers
+  if (unit.type === "fighter" || unit.type === "assault" || unit.type === "elite") {
+    gameState.attackers.push(unit);
+  }
+
+  // Если это ремонтник, добавляем в repairmen
+  if (unit.type === "repairman") {
+    gameState.repairmen.push(unit);
+  }
+
+  // Если у юнита уже установлен флаг защиты, можно сразу добавить его в defenders
+  if (unit.defending) {
+    gameState.defenders.push(unit);
+  }
+}
+
+// Функция удаления юнита
+function removeUnit(unit) {
+  gameState.units = gameState.units.filter(u => u !== unit);
+  if (unit.type === "fighter" || unit.type === "assault" || unit.type === "elite") {
+    gameState.attackers = gameState.attackers.filter(u => u !== unit);
+  }
+  if (unit.type === "repairman") {
+    gameState.repairmen = gameState.repairmen.filter(u => u !== unit);
+  }
+  if (unit.defending) {
+    gameState.defenders = gameState.defenders.filter(u => u !== unit);
+  }
+}
+
+class Quadtree {
+  constructor(bounds, capacity = 4) {
+    this.bounds = bounds; // { x, y, width, height }
+    this.capacity = capacity;
+    this.objects = [];
+    this.divided = false;
+  }
+  
+  insert(object) {
+    if (!this.contains(this.bounds, object)) return false;
+
+    if (this.objects.length < this.capacity) {
+      this.objects.push(object);
+      return true;
+    }
+
+    if (!this.divided) this.subdivide();
+
+    return (
+      this.northwest.insert(object) ||
+      this.northeast.insert(object) ||
+      this.southwest.insert(object) ||
+      this.southeast.insert(object)
+    );
+  }
+
+  subdivide() {
+    const { x, y, width, height } = this.bounds;
+    const halfW = width / 2;
+    const halfH = height / 2;
+
+    this.northwest = new Quadtree({ x, y, width: halfW, height: halfH }, this.capacity);
+    this.northeast = new Quadtree({ x: x + halfW, y, width: halfW, height: halfH }, this.capacity);
+    this.southwest = new Quadtree({ x, y: y + halfH, width: halfW, height: halfH }, this.capacity);
+    this.southeast = new Quadtree({ x: x + halfW, y: y + halfH, width: halfW, height: halfH }, this.capacity);
+
+    this.divided = true;
+  }
+
+  query(range, found = []) {
+    if (!this.intersects(this.bounds, range)) return found;
+
+    for (const obj of this.objects) {
+      if (this.contains(range, obj)) {
+        found.push(obj);
+      }
+    }
+
+    if (this.divided) {
+      this.northwest.query(range, found);
+      this.northeast.query(range, found);
+      this.southwest.query(range, found);
+      this.southeast.query(range, found);
+    }
+
+    return found;
+  }
+
+  contains(rect, object) {
+    return (
+      object.x >= rect.x &&
+      object.x <= rect.x + rect.width &&
+      object.y >= rect.y &&
+      object.y <= rect.y + rect.height
+    );
+  }
+
+  intersects(rect1, rect2) {
+    return !(
+      rect1.x > rect2.x + rect2.width ||
+      rect1.x + rect1.width < rect2.x ||
+      rect1.y > rect2.y + rect2.height ||
+      rect1.y + rect1.height < rect2.y
+    );
+  }
+
+  clear() {
+    this.objects = [];
+    if (this.divided) {
+      this.northwest.clear();
+      this.northeast.clear();
+      this.southwest.clear();
+      this.southeast.clear();
+      this.divided = false;
+    }
+  }
+}
+
+
 // Вспомогательные переменные для долгого тапа
 let longTapTimeout;
 let longTapFired = false;
@@ -77,13 +205,12 @@ function spawnDestructionFragments(x, y, width, height, unitType, numFragments =
       });
     }
 
-    // Здесь мы добавляем начальное смещение скорости фрагмента,
-    // чтобы фрагменты "наследовали" импульс уничтожённого юнита.
+    // Начальный импульс фрагмента задаём равномерно в диапазоне [-50, 50]
     const fragment = {
       x: x,
       y: y,
-      vx: initialVx + (Math.random() - 1) * 50,
-      vy: initialVy + (Math.random() - 1) * 50,
+      vx: initialVx + (Math.random() - 0.5) * 100,
+      vy: initialVy + (Math.random() - 0.5) * 100,
       angle: Math.random() * Math.PI * 4,
       angularVelocity: (Math.random() - 1) * 4,
       points: points,
@@ -94,6 +221,7 @@ function spawnDestructionFragments(x, y, width, height, unitType, numFragments =
     gameState.fragments.push(fragment);
   }
 }
+
 
 
 
@@ -260,7 +388,7 @@ function renderPersistentFog() {
         const worldX = c * FOG_CELL_SIZE;
         const worldY = r * FOG_CELL_SIZE;
         const screenPos = worldToScreen(worldX, worldY);
-        ctx.fillStyle = "rgba(0,0,0,1)";
+        ctx.fillStyle = "rgba(0,0,0,0.3)";
         ctx.fillRect(screenPos.x, screenPos.y, cellScreenSize, cellScreenSize);
       } else if (fogMap[r][c] < 1) {
         // Если ячейка была открыта ранее, но сейчас не видна – слегка затемняем
@@ -303,8 +431,8 @@ function resizeCanvas() {
   canvas.width = window.innerWidth;
   canvas.height = window.innerHeight;
   // Размеры виртуального мира – в 3 раза больше видимой области
-  worldWidth = canvas.width * 3;
-  worldHeight = canvas.height * 3;
+  worldWidth = canvas.width * 2;
+  worldHeight = canvas.height * 2;
   console.log("worldWidth:", worldWidth, "worldHeight:", worldHeight);
   
   starField.init();
@@ -316,6 +444,11 @@ function resizeCanvas() {
   const dy = canvas.height / 2 - oldHeight / 2;
   camera.offsetX += dx;
   camera.offsetY += dy;
+	
+	// Инициализируем квадродерево с размерами мира
+  quadtree = new Quadtree({ x: 0, y: 0, width: worldWidth, height: worldHeight });
+
+  console.log("Квадродерево обновлено с размерами:", worldWidth, worldHeight);
 }
 window.addEventListener("resize", resizeCanvas);
 
@@ -344,7 +477,7 @@ function getRandomBasePosition(margin) {
   }
   return { x, y };
 }
-const margin = 100;
+const margin = 200;
 const playerPos = getRandomBasePosition(margin);
 const aiPos = getRandomBasePosition(margin);
 const playerBase = new Building("base", "player", playerPos.x, playerPos.y);
@@ -433,22 +566,43 @@ function lerpAngle(a, b, t) {
   return a + diff * t;
 }
 
+
 // Функция обновления пуль, вызываемая каждый кадр (deltaTime в секундах)
 function updateBullets(deltaTime) {
-  // Проходим по пулям в обратном порядке, чтобы безопасно удалять просроченные пули
   for (let i = gameState.bullets.length - 1; i >= 0; i--) {
     let bullet = gameState.bullets[i];
+    
+    if (bullet.isMissile && bullet.target && bullet.target.health > 0) {
+      const desiredAngle = Math.atan2(bullet.target.y - bullet.y, bullet.target.x - bullet.x);
+      // Увеличиваем коэффициент наведения для улучшения корректности
+      bullet.angle = lerpAngle(bullet.angle, desiredAngle, 0.2);
+    }
+    
     // Обновляем позицию пули
     bullet.x += Math.cos(bullet.angle) * bullet.speed * deltaTime;
     bullet.y += Math.sin(bullet.angle) * bullet.speed * deltaTime;
-    // Уменьшаем время жизни пули
+    
+    // Проверка столкновения пули с врагом
+    const hitTargets = getObjectsInRange({ x: bullet.x, y: bullet.y }, 10)
+      .filter(target => target.owner !== bullet.shooter.owner && target.health > 0);
+    if (hitTargets.length > 0) {
+      hitTargets.forEach(target => {
+        target.health -= bullet.damage;
+        if (target.health <= 0) {
+          // Можно добавить эффекты разрушения
+          spawnDestructionFragments(target.x, target.y, target.width, target.height, target.type);
+        }
+      });
+      // Удаляем пулю после попадания
+      gameState.bullets.splice(i, 1);
+      continue;
+    }
+    
     bullet.lifetime -= deltaTime;
     if (bullet.lifetime <= 0) {
-      // Если это ракета, инициируем взрыв с splash-уроном
       if (bullet.isMissile) {
         explodeMissile(bullet);
       }
-      // Удаляем пулю из массива
       gameState.bullets.splice(i, 1);
     }
   }
@@ -456,28 +610,23 @@ function updateBullets(deltaTime) {
 
 // Функция взрыва ракеты, которая наносит splash-урон всем целям в заданном радиусе
 function explodeMissile(bullet) {
-  // Находим все объекты, принадлежащие противнику, находящиеся в пределах splashRadius
+  // Находим цели в области splash-урона
   const targets = gameState.units.concat(gameState.buildings).filter(target => {
     return target.owner !== bullet.shooter.owner &&
            target.health > 0 &&
            Math.hypot(target.x - bullet.x, target.y - bullet.y) <= bullet.splashRadius;
   });
+  
   targets.forEach(target => {
     target.health -= bullet.splashDamage;
-    // Дополнительная логика: можно добавить проверку на уничтожение цели, запуск анимации и т.д.
     if (target.health <= 0) {
-      // Например, запуск частиц или удаление объекта
-      spawnParticles(target.x, target.y, "orange");
-	  spawnDestructionFragments(target.x, target.y, target.width, target.height, unit.vx, unit.vy, "red");
-      // Удаление объекта можно проводить отдельно
+      // При уничтожении объекта создаём осколки (если нужно)
+      spawnDestructionFragments(target.x, target.y, target.width, target.height, target.type);
     }
   });
-  // Запускаем анимацию взрыва (например, частицы взрыва)
-  spawnParticles(bullet.x, bullet.y, "skyblue");
+
 }
 
-
-// Функция динамичного перемещения с элементом случайного "виляния"
 // Функция динамичного перемещения с физической моделью (ускорение, инерция, орбитальное маневрирование)
 function dynamicMove(unit, target, deltaTime) {
   const dx = target.x - unit.x;
@@ -488,41 +637,50 @@ function dynamicMove(unit, target, deltaTime) {
   // Вычисляем желаемый угол движения (направление к цели)
   const desiredAngle = Math.atan2(dy, dx);
   
-  // Ограничиваем скорость поворота (например, 0.05 рад/кадр)
-  const maxTurnSpeed = 0.05;
+  // Плавное приближение к нужному углу (можно настроить скорость поворота)
+  const maxTurnSpeed = 0.5;
   unit.angle = lerpAngle(unit.angle, desiredAngle, maxTurnSpeed);
   
-  // Теперь вычисляем вектор ускорения на основе текущего угла (т.е. направления "носа")
+  // Определяем направление "носа"
   const frontDirX = Math.cos(unit.angle);
   const frontDirY = Math.sin(unit.angle);
   
-  // Плавное приближение к желаемой дистанции (desiredDistance)
-  const desiredDistance = unit.desiredDistance || 100;
+  // Если цель – здание, желаемая дистанция – граница здания, иначе значение из unit или стандартное 100
+  const desiredDistance = target instanceof Building 
+    ? (Math.max(target.width, target.height) / 2) + 10 
+    : (unit.desiredDistance || 100);
+  
+  // Определяем ошибку дистанции
   const distanceError = distance - desiredDistance;
   
-  // Настраиваем коэффициенты для ускорения
+  // Коэффициенты для прямого приближения и орбитального манёвра
   const approachStrength = 0.3;
   const orbitStrength = 0.3;
   
-  // Тангенциальный вектор (перпендикуляр к направлению "носа")
+  // Тангенциальный вектор (перпендикулярен направлению "носа")
   const tanX = -frontDirY;
   const tanY = frontDirX;
   
-  // Вычисляем ускорение, которое действует по направлению "носа" с учетом ошибки дистанции
-  const ax = (frontDirX * distanceError * approachStrength) + (tanX * orbitStrength);
-  const ay = (frontDirY * distanceError * approachStrength) + (tanY * orbitStrength);
+  // Если ошибка мала, не обнуляем скорость, а добавляем небольшой орбитальный импульс
+  let ax, ay;
+  if (Math.abs(distanceError) < 1) {
+    ax = tanX * orbitStrength;
+    ay = tanY * orbitStrength;
+  } else {
+    ax = frontDirX * distanceError * approachStrength + tanX * orbitStrength;
+    ay = frontDirY * distanceError * approachStrength + tanY * orbitStrength;
+  }
   
-  // Инициализируем скорость, если её нет
   if (typeof unit.vx !== 'number') unit.vx = 0;
   if (typeof unit.vy !== 'number') unit.vy = 0;
   
-  // Применяем затухание (для сохранения импульса)
+  // Применяем затухание, чтобы сохранить плавность движения
   const damping = 0.995;
   unit.vx = unit.vx * damping + ax * deltaTime;
   unit.vy = unit.vy * damping + ay * deltaTime;
   
-  // Ограничение максимальной скорости (при необходимости)
-  const maxSpeed = 5;
+  // Ограничиваем максимальную скорость
+  const maxSpeed = 70;
   const currentSpeed = Math.hypot(unit.vx, unit.vy);
   if (currentSpeed > maxSpeed) {
     unit.vx = (unit.vx / currentSpeed) * maxSpeed;
@@ -533,8 +691,83 @@ function dynamicMove(unit, target, deltaTime) {
   unit.y += unit.vy * deltaTime;
 }
 
+function dynamicMoveAdvanced(unit, target, deltaTime) {
+  const dx = target.x - unit.x;
+  const dy = target.y - unit.y;
+  const distance = Math.hypot(dx, dy);
+  if (distance === 0) return;
 
+  // Основной желаемый угол движения к цели
+  const desiredAngle = Math.atan2(dy, dx);
 
+  // Плавное приближение к нужному углу
+  const baseTurnSpeed = 0.05;
+  unit.angle = lerpAngle(unit.angle, desiredAngle, baseTurnSpeed);
+
+  // Направление "носа"
+  const frontDirX = Math.cos(unit.angle);
+  const frontDirY = Math.sin(unit.angle);
+
+  // Желаемая дистанция: для зданий — граница, для юнитов — заданное значение или 100
+  const desiredDistance = target instanceof Building 
+    ? (Math.max(target.width, target.height) / 2) + 10 
+    : (unit.desiredDistance || 100);
+
+  const distanceError = distance - desiredDistance;
+
+  // Базовое ускорение, направленное по линии к цели
+  const approachStrength = 0.3;
+  const ax_base = frontDirX * distanceError * approachStrength;
+  const ay_base = frontDirY * distanceError * approachStrength;
+
+  // Дополнительное ускорение (тактическая составляющая)
+  let tacticAx = 0, tacticAy = 0;
+  if (unit.tactic === "orbit") {
+    // Орбитальное движение: постоянное тангенциальное ускорение, направленное перпендикулярно линии к цели
+    const orbitStrength = 50; // настройте по желанию
+    // Перпендикуляр к desiredAngle
+    const perpX = -Math.sin(desiredAngle);
+    const perpY = Math.cos(desiredAngle);
+    tacticAx = perpX * orbitStrength;
+    tacticAy = perpY * orbitStrength;
+  } else if (unit.tactic === "figure8") {
+    // Атака по "восьмерке": периодическое изменение направления тангенциального ускорения
+    const figure8Strength = 50; // настройте по желанию
+    // Частота, например, 1 циклов в секунду
+    const t = performance.now() / 1000;
+    const factor = Math.sin(t * 2 * Math.PI);
+    const perpX = -Math.sin(desiredAngle);
+    const perpY = Math.cos(desiredAngle);
+    tacticAx = perpX * figure8Strength * factor;
+    tacticAy = perpY * figure8Strength * factor;
+  }
+
+  // Итоговое ускорение – сумма базового и тактического
+  const ax = ax_base + tacticAx;
+  const ay = ay_base + tacticAy;
+
+  if (typeof unit.vx !== 'number') unit.vx = 0;
+  if (typeof unit.vy !== 'number') unit.vy = 0;
+  
+  // Применяем затухание, чтобы сохранить плавность движения
+  const damping = 0.995;
+  unit.vx = unit.vx * damping + ax * deltaTime;
+  unit.vy = unit.vy * damping + ay * deltaTime;
+
+  // Ограничиваем максимальную скорость – увеличьте, если хотите сильный импульс
+  const maxSpeed = 10;
+  const currentSpeed = Math.hypot(unit.vx, unit.vy);
+  if (currentSpeed > maxSpeed) {
+    unit.vx = (unit.vx / currentSpeed) * maxSpeed;
+    unit.vy = (unit.vy / currentSpeed) * maxSpeed;
+  }
+
+  unit.x += unit.vx * deltaTime;
+  unit.y += unit.vy * deltaTime;
+  
+  // Для отладки можно вывести текущую скорость:
+  console.log("DynamicMoveAdvanced, current speed:", Math.hypot(unit.vx, unit.vy));
+}
 // Функция атаки для штурмовика (assault)
 // Сначала выполняется стрельба, затем юнит продолжает маневрировать, используя новую физическую модель движения
 function dynamicAttackAssault(unit, target, deltaTime) {
@@ -577,8 +810,6 @@ function dynamicAttackAssault(unit, target, deltaTime) {
   // Маневрируем, используя динамическое движение
   dynamicMove(unit, target, deltaTime);
 }
-
-
 // Функция атаки для элитного юнита
 function dynamicAttackElite(unit, target, deltaTime) {
   if (unit.health <= 0 || !target || target.health <= 0) {
@@ -685,10 +916,6 @@ function dynamicAttackElite(unit, target, deltaTime) {
 
 }
 
-
-
-
-
 // Основная функция атаки, распределяющая вызовы в зависимости от типа юнита
 function dynamicAttack(unit, target, deltaTime) {
   if (unit.type === "elite") {
@@ -736,11 +963,13 @@ function animateMoveAndScale(unit, targetX, targetY, targetScale, duration, call
     if (t < 1) {
       requestAnimationFrame(step);
     } else {
+      //console.log("animateMoveAndScale завершена для юнита", unit);
       if (callback) callback();
     }
   }
   step();
 }
+
 // Обновление UI ресурсов
 function updateResourceUI() {
   document.getElementById("playerGold").innerText = gameState.playerResources.gold;
@@ -775,62 +1004,81 @@ function spawnAtBoundary(building, offset = 10) {
   return { spawn, target };
 }
 // Пространственный индекс для поиска целей
-function buildSpatialIndex() {
-  const index = {};
-  function addToIndex(obj) {
-    const cellX = Math.floor(obj.x / GRID_SIZE);
-    const cellY = Math.floor(obj.y / GRID_SIZE);
-    const key = cellX + "_" + cellY;
-    if (!index[key]) index[key] = [];
-    index[key].push(obj);
-  }
-  gameState.units.forEach(u => addToIndex(u));
-  gameState.buildings.forEach(b => addToIndex(b));
-  return index;
+
+function getObjectsInRange(pos, range) {
+  const queryRect = {
+    x: pos.x - range,
+    y: pos.y - range,
+    width: range * 2,
+    height: range * 2
+  };
+  return quadtree.query(queryRect);
 }
 
-function getEnemiesInRange(pos, range) {
-  const index = buildSpatialIndex();
-  const gridRadius = Math.ceil(range / GRID_SIZE);
-  const cellX = Math.floor(pos.x / GRID_SIZE);
-  const cellY = Math.floor(pos.y / GRID_SIZE);
-  let candidates = [];
-  for (let dx = -gridRadius; dx <= gridRadius; dx++) {
-    for (let dy = -gridRadius; dy <= gridRadius; dy++) {
-      const key = (cellX + dx) + "_" + (cellY + dy);
-      if (index[key]) candidates = candidates.concat(index[key]);
-    }
-  }
-  return candidates;
+
+function getEnemiesInRange(pos, range, shooterOwner) {
+  return getObjectsInRange(pos, range)
+    .filter(obj =>
+      // Фильтруем только объекты, у которых есть здоровье (т.е. юниты или здания)
+      (obj.health !== undefined) &&
+      (obj.owner !== shooterOwner) &&
+      Math.hypot(obj.x - pos.x, obj.y - pos.y) < range
+    );
 }
+
+
 // Функция поиска ближайшей базы/склада для доставки ресурсов
 function findNearestDeliveryBuilding(x, y, owner) {
-  let buildings = gameState.buildings.filter(b =>
-    b.owner === owner && (b.type === "warehouse" || b.type === "base" || b.type === "base2" || b.type === "base3")
-  );
-  let nearest = null, minDist = Infinity;
-  buildings.forEach(b => {
+  const pos = { x, y };
+  // Здесь используем фиксированный радиус поиска, например, 200 единиц
+  const candidates = getObjectsInRange(pos, 1000)
+    .filter(b => b.owner === owner && (b.type === "warehouse" || b.type.startsWith("base")));
+  
+  let nearest = null;
+  let minDist = Infinity;
+  candidates.forEach(b => {
     const d = Math.hypot(b.x - x, b.y - y);
-    if (d < minDist) { minDist = d; nearest = b; }
+    if (d < minDist) {
+      minDist = d;
+      nearest = b;
+    }
   });
   return nearest;
 }
+
+
 // Функция обновления ресурсов (вращение золота)
 function updateResources(deltaTime) {
   gameState.resources.forEach(resource => {
-    if (resource.type === "gold") {
+    // Обновление, например, для вращения золота
+    if (resource.type === "gold" && resource.rotationSpeed) {
       resource.rotation += resource.rotationSpeed * deltaTime;
     }
+    // Если ресурс исчерпан, помечаем его как depleted
+    if (resource.amount <= 0) {
+      resource.depleted = true;
+    }
   });
+  
+  // Удаляем исчерпанные ресурсы из массива
+  cleanupResources();
 }
+
+function cleanupResources() {
+  gameState.resources = gameState.resources.filter(resource => resource.amount > 0);
+}
+
 // Функция проверки видимости базы
 function isBaseVisible(base) {
   const screenPos = worldToScreen(base.x, base.y);
   return (
-    screenPos.x >= 0 && screenPos.x <= canvas.width &&
-    screenPos.y >= 0 && screenPos.y <= canvas.height
+    screenPos.x >= 0 &&
+    screenPos.x <= canvas.width &&
+    screenPos.y >= 0 &&
+    screenPos.y <= canvas.height
   );
 }
+
 // Обновление кнопки навигации по базе
 function updateBase3NavButton() {
   const playerBase3 = gameState.buildings.find(b => b.owner === "player" && b.type === "base3");
@@ -1045,23 +1293,27 @@ function processCommandQueue(unit) {
       processCommandQueue(unit);
     });
   } else if (command.type === "attack") {
-    if (!command.target || command.target.health <= 0) {
-      processCommandQueue(unit);
-      return;
-    }
-    unit.target = command.target;
-    if (unit.type === "fighter" || unit.type === "assault") {
-      const d = Math.hypot(unit.x - command.target.x, unit.y - command.target.y);
-      if (d > unit.range) {
-        moveUnit(unit, command.target.x, command.target.y, () => processCommandQueue(unit));
-      } else {
-        dynamicAttack(unit, command.target, 1/60);
-        requestAnimationFrame(() => processCommandQueue(unit));
-      }
-    } else {
+  if (!command.target || command.target.health <= 0 ||
+      (!gameState.buildings.includes(command.target) && !gameState.units.includes(command.target))) {
+    // Если цель недействительна, сбрасываем команду
+    unit.commandQueue = [];
+    unit.target = null;
+    return;
+  }
+  unit.target = command.target;
+  if (unit.type === "fighter" || unit.type === "assault") {
+    const d = Math.hypot(unit.x - command.target.x, unit.y - command.target.y);
+    if (d > unit.range) {
       moveUnit(unit, command.target.x, command.target.y, () => processCommandQueue(unit));
+    } else {
+      dynamicAttack(unit, command.target, 1/60);
+      requestAnimationFrame(() => processCommandQueue(unit));
     }
-  } else if (command.type === "gather") {
+  } else {
+    moveUnit(unit, command.target.x, command.target.y, () => processCommandQueue(unit));
+  }
+}
+ else if (command.type === "gather") {
     const resource = command.resource;
     moveUnit(unit, resource.x, resource.y, () => {
       if (resource.amount > 0) {
@@ -1089,18 +1341,20 @@ function processCommandQueue(unit) {
   } else if (command.type === "repair") {
     console.log("Получена команда ремонта для объекта", command.target);
     if (unit.inWorkshop) {
-      const exitOffset = 20;
-      const angle = Math.random() * Math.PI * 2;
-      const exitX = command.workshop.x + exitOffset * Math.cos(angle);
-      const exitY = command.workshop.y + exitOffset * Math.sin(angle);
-      animateMoveAndScale(unit, exitX, exitY, 1, 1000, () => {
-        unit.hidden = false;
-        unit.inWorkshop = null;
-        moveUnit(unit, command.target.x, command.target.y, () => {
-          startRepairProcess(unit, command);
-        });
-      });
-    } else {
+  const exitOffset = 20;
+  const angle = Math.random() * Math.PI * 2;
+  const exitX = command.workshop.x + exitOffset * Math.cos(angle);
+  const exitY = command.workshop.y + exitOffset * Math.sin(angle);
+  //console.log("Ремонтник выходит из мастерской в точку:", { exitX, exitY });
+  animateMoveAndScale(unit, exitX, exitY, 1, 1000, () => {
+    unit.hidden = false;
+    unit.inWorkshop = null;
+    moveUnit(unit, command.target.x, command.target.y, () => {
+      startRepairProcess(unit, command);
+    });
+  });
+}
+ else {
       const distanceToWorkshop = Math.hypot(unit.x - command.workshop.x, unit.y - command.workshop.y);
       if (distanceToWorkshop > 10) {
         moveUnit(unit, command.workshop.x, command.workshop.y, () => {
@@ -1120,7 +1374,7 @@ function processCommandQueue(unit) {
 function generateResources() {
   const resourceTypes = ["gold", "silicon", "plasma"];
   resourceTypes.forEach(type => {
-    for (let i = 0; i < 90; i++) {
+    for (let i = 0; i < 100; i++) {
       const x = Math.random() * (worldWidth - 20) + 10;
       const y = Math.random() * (worldHeight - 20) + 10;
       const max = type === "gold" ? 500 : type === "silicon" ? 500 : 500;
