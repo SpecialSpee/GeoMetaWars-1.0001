@@ -1,8 +1,208 @@
+function spawnExplosionEffect(x, y) {
+  // Вспышка: крупная белая частица с коротким временем жизни
+  const flashParticle = {
+    x: x,
+    y: y,
+    vx: 0,
+    vy: 0,
+    life: 0.1,      // очень короткое время жизни
+    maxLife: 0.1,
+    radius: 30,     // большой радиус вспышки
+    color: "white",
+    flash: true     // флаг, что это вспышка
+  };
+  gameState.particles.push(flashParticle);
 
+  // Остальные частицы взрыва (например, оранжевые)
+  const particleCount = 15 + Math.floor(Math.random() * 10);
+  for (let i = 0; i < particleCount; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = 80 + Math.random() * 80;
+    const life = 0.5 + Math.random() * 0.5;
+    const explosionParticle = {
+      x: x,
+      y: y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      life: life,
+      maxLife: life,
+      radius: 2,
+      color: "orange",
+      flash: false
+    };
+    gameState.particles.push(explosionParticle);
+  }
+}
+
+// Функция создания эффекта искр при попадании пули
+function spawnSparkEffect(x, y) {
+  const sparkCount = 5 + Math.floor(Math.random() * 5);
+  for (let i = 0; i < sparkCount; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = 50 + Math.random() * 50;
+    const life = 0.3 + Math.random() * 0.3;
+    const spark = {
+      x: x,
+      y: y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      life: life,
+      maxLife: life,
+      radius: 2,
+      color: "yellow",
+      flash: false
+    };
+    gameState.particles.push(spark);
+  }
+}
+
+// Функция обновления частиц (для вспышек, взрыва, искр и т.д.)
+function updateParticles(deltaTime) {
+  for (let i = gameState.particles.length - 1; i >= 0; i--) {
+    const p = gameState.particles[i];
+    p.x += p.vx * deltaTime;
+    p.y += p.vy * deltaTime;
+    if (p.flash) {
+      // Для вспышки можно уменьшать радиус, чтобы эффект быстрее затухал
+      p.radius *= 0.8;
+    }
+    p.life -= deltaTime;
+    if (p.life <= 0) {
+      gameState.particles.splice(i, 1);
+    }
+  }
+}
+
+// Функция отрисовки частиц с учетом камеры
+function renderParticles() {
+  ctx.save();
+  // Применяем преобразования камеры, чтобы частицы отрисовывались в мировых координатах
+  ctx.translate(camera.offsetX, camera.offsetY);
+  ctx.scale(camera.scale, camera.scale);
+  
+  gameState.particles.forEach(p => {
+    const alpha = p.life / p.maxLife;
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = p.color;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+    ctx.fill();
+  });
+  ctx.globalAlpha = 1;
+  ctx.restore();
+}
+
+// Обновленная функция обработки пуль
+function updateBullets(deltaTime) {
+  for (let i = gameState.bullets.length - 1; i >= 0; i--) {
+    let bullet = gameState.bullets[i];
+
+    if (bullet.isMissile && bullet.target && bullet.target.health > 0) {
+      const desiredAngle = Math.atan2(bullet.target.y - bullet.y, bullet.target.x - bullet.x);
+      bullet.angle = lerpAngle(bullet.angle, desiredAngle, 0.2);
+    }
+
+    bullet.x += Math.cos(bullet.angle) * bullet.speed * deltaTime;
+    bullet.y += Math.sin(bullet.angle) * bullet.speed * deltaTime;
+
+    const hitTargets = getObjectsInRange({ x: bullet.x, y: bullet.y }, 10)
+      .filter(target => target.owner !== bullet.shooter.owner && target.health > 0);
+    if (hitTargets.length > 0) {
+      hitTargets.forEach(target => {
+        target.health -= bullet.damage;
+        // Если это обычная пуля (не ракета и не артиллерия) – создаем эффект искр
+        if (!bullet.isMissile && !bullet.isArtillery) {
+          spawnSparkEffect(bullet.x, bullet.y);
+        }
+        if (target.health <= 0) {
+          spawnDestructionFragments(target.x, target.y, target.width, target.height, target.type);
+        }
+      });
+      gameState.bullets.splice(i, 1);
+      continue;
+    }
+
+    bullet.lifetime -= deltaTime;
+    if (bullet.lifetime <= 0) {
+      if (bullet.isMissile || bullet.isArtillery) {
+        spawnExplosionEffect(bullet.x, bullet.y);
+        const targets = gameState.units.concat(gameState.buildings).filter(target => {
+          return target.owner !== bullet.shooter.owner &&
+                 target.health > 0 &&
+                 Math.hypot(target.x - bullet.x, target.y - bullet.y) <= bullet.splashRadius;
+        });
+        targets.forEach(target => {
+          target.health -= bullet.splashDamage;
+          if (target.health <= 0) {
+            spawnDestructionFragments(target.x, target.y, target.width, target.height, target.type);
+          }
+        });
+      }
+      gameState.bullets.splice(i, 1);
+    }
+  }
+}
+
+// Пример обновления пуль с вызовом эффекта попадания (искры)
+// При попадании пули создается эффект искр (spawnSparkEffect) и/или взрыв, если это ракета.
+function updateBullets(deltaTime) {
+  for (let i = gameState.bullets.length - 1; i >= 0; i--) {
+    let bullet = gameState.bullets[i];
+
+    if (bullet.isMissile && bullet.target && bullet.target.health > 0) {
+      const desiredAngle = Math.atan2(bullet.target.y - bullet.y, bullet.target.x - bullet.x);
+      bullet.angle = lerpAngle(bullet.angle, desiredAngle, 0.2);
+    }
+
+    bullet.x += Math.cos(bullet.angle) * bullet.speed * deltaTime;
+    bullet.y += Math.sin(bullet.angle) * bullet.speed * deltaTime;
+
+    const hitTargets = getObjectsInRange({ x: bullet.x, y: bullet.y }, 10)
+      .filter(target => target.owner !== bullet.shooter.owner && target.health > 0);
+    if (hitTargets.length > 0) {
+      hitTargets.forEach(target => {
+        target.health -= bullet.damage;
+        // Если это обычная пуля (не ракета и не артиллерия) – создаем эффект искр
+        if (!bullet.isMissile && !bullet.isArtillery) {
+          spawnSparkEffect(bullet.x, bullet.y);
+        }
+        if (target.health <= 0) {
+          spawnDestructionFragments(target.x, target.y, target.width, target.height, target.type);
+        }
+      });
+      gameState.bullets.splice(i, 1);
+      continue;
+    }
+
+    bullet.lifetime -= deltaTime;
+    if (bullet.lifetime <= 0) {
+      // Для ракет и артиллерийских снарядов вызываем эффект взрыва с вспышкой
+      if (bullet.isMissile || bullet.isArtillery) {
+        spawnExplosionEffect(bullet.x, bullet.y);
+        const targets = gameState.units.concat(gameState.buildings).filter(target => {
+          return target.owner !== bullet.shooter.owner &&
+                 target.health > 0 &&
+                 Math.hypot(target.x - bullet.x, target.y - bullet.y) <= bullet.splashRadius;
+        });
+        targets.forEach(target => {
+          target.health -= bullet.splashDamage;
+          if (target.health <= 0) {
+            spawnDestructionFragments(target.x, target.y, target.width, target.height, target.type);
+          }
+        });
+      }
+      gameState.bullets.splice(i, 1);
+    }
+  }
+}
 
 // ============================
 // ==== Класс Quadtree ========
 // ============================
+
+
+
+
 function addUnit(unit) {
   // Добавляем в общий список
   gameState.units.push(unit);
@@ -184,16 +384,20 @@ gameState.fragments = [];
 // Функция для генерации фрагментов при разрушении объекта (юнита или здания)
 // Функция для генерации фрагментов разрушения в виде нерегулярных многоугольников
 
-function spawnDestructionFragments(x, y, width, height, unitType, numFragments = Math.floor(Math.random() * 4) + 4, initialVx = 0, initialVy = 0) {
-  // Если unitType начинается с "#", предполагаем, что это уже цвет, иначе ищем его в словаре
+function spawnDestructionFragments(x, y, width, height, unitType) {
+  // Если unitType начинается с "#", предполагаем, что это уже цвет
+  // Иначе ищем соответствующий цвет в объекте fragmentColors
   const color = (typeof unitType === "string" && unitType.startsWith("#"))
     ? unitType
-    : (fragmentColors[unitType] || "gray");
+    : (fragmentColors[unitType] || "gray"); // Если не найден, используем gray
+
+  // Количество фрагментов можно задавать как случайное число
+  const numFragments = Math.floor(Math.random() * 4) + 4;
+  const avgRadius = (width + height) / 6;
 
   for (let i = 0; i < numFragments; i++) {
     const numVertices = Math.floor(Math.random() * 4) + 4;
     const points = [];
-    const avgRadius = (width + height) / 6;
     for (let j = 0; j < numVertices; j++) {
       const baseAngle = (j / numVertices) * 2 * Math.PI;
       const angleOffset = (Math.random() - 0.5) * (Math.PI / numVertices);
@@ -204,13 +408,11 @@ function spawnDestructionFragments(x, y, width, height, unitType, numFragments =
         y: radius * Math.sin(angle)
       });
     }
-
-    // Начальный импульс фрагмента задаём равномерно в диапазоне [-50, 50]
     const fragment = {
       x: x,
       y: y,
-      vx: initialVx + (Math.random() - 0.5) * 100,
-      vy: initialVy + (Math.random() - 0.5) * 100,
+      vx: (Math.random() - 0.5) * 100,
+      vy: (Math.random() - 0.5) * 100,
       angle: Math.random() * Math.PI * 4,
       angularVelocity: (Math.random() - 1) * 4,
       points: points,
@@ -221,6 +423,7 @@ function spawnDestructionFragments(x, y, width, height, unitType, numFragments =
     gameState.fragments.push(fragment);
   }
 }
+
 
 
 
@@ -388,7 +591,7 @@ function renderPersistentFog() {
         const worldX = c * FOG_CELL_SIZE;
         const worldY = r * FOG_CELL_SIZE;
         const screenPos = worldToScreen(worldX, worldY);
-        ctx.fillStyle = "rgba(0,0,0,1)";
+        ctx.fillStyle = "rgba(0,0,0,0.1)";
         ctx.fillRect(screenPos.x, screenPos.y, cellScreenSize, cellScreenSize);
       } else if (fogMap[r][c] < 1) {
         // Если ячейка была открыта ранее, но сейчас не видна – слегка затемняем
@@ -591,65 +794,7 @@ function lerpAngle(a, b, t) {
 }
 
 
-// Функция обновления пуль, вызываемая каждый кадр (deltaTime в секундах)
-function updateBullets(deltaTime) {
-  for (let i = gameState.bullets.length - 1; i >= 0; i--) {
-    let bullet = gameState.bullets[i];
-    
-    if (bullet.isMissile && bullet.target && bullet.target.health > 0) {
-      const desiredAngle = Math.atan2(bullet.target.y - bullet.y, bullet.target.x - bullet.x);
-      // Увеличиваем коэффициент наведения для улучшения корректности
-      bullet.angle = lerpAngle(bullet.angle, desiredAngle, 0.2);
-    }
-    
-    // Обновляем позицию пули
-    bullet.x += Math.cos(bullet.angle) * bullet.speed * deltaTime;
-    bullet.y += Math.sin(bullet.angle) * bullet.speed * deltaTime;
-    
-    // Проверка столкновения пули с врагом
-    const hitTargets = getObjectsInRange({ x: bullet.x, y: bullet.y }, 10)
-      .filter(target => target.owner !== bullet.shooter.owner && target.health > 0);
-    if (hitTargets.length > 0) {
-      hitTargets.forEach(target => {
-        target.health -= bullet.damage;
-        if (target.health <= 0) {
-          // Можно добавить эффекты разрушения
-          spawnDestructionFragments(target.x, target.y, target.width, target.height, target.type);
-        }
-      });
-      // Удаляем пулю после попадания
-      gameState.bullets.splice(i, 1);
-      continue;
-    }
-    
-    bullet.lifetime -= deltaTime;
-    if (bullet.lifetime <= 0) {
-      if (bullet.isMissile) {
-        explodeMissile(bullet);
-      }
-      gameState.bullets.splice(i, 1);
-    }
-  }
-}
 
-// Функция взрыва ракеты, которая наносит splash-урон всем целям в заданном радиусе
-function explodeMissile(bullet) {
-  // Находим цели в области splash-урона
-  const targets = gameState.units.concat(gameState.buildings).filter(target => {
-    return target.owner !== bullet.shooter.owner &&
-           target.health > 0 &&
-           Math.hypot(target.x - bullet.x, target.y - bullet.y) <= bullet.splashRadius;
-  });
-  
-  targets.forEach(target => {
-    target.health -= bullet.splashDamage;
-    if (target.health <= 0) {
-      // При уничтожении объекта создаём осколки (если нужно)
-      spawnDestructionFragments(target.x, target.y, target.width, target.height, target.type);
-    }
-  });
-
-}
 
 // Функция динамичного перемещения с физической моделью (ускорение, инерция, орбитальное маневрирование)
 function dynamicMove(unit, target, deltaTime) {
@@ -877,20 +1022,22 @@ function dynamicAttackElite(unit, target, deltaTime) {
 
   // Отдельно обрабатываем артиллерию, если цель в пределах
   if (currentDistance <= unit.artilleryRange && now - unit.lastArtilleryAttack >= unit.artilleryCooldown) {
-    const desiredAngle = Math.atan2(target.y - unit.y, target.x - unit.x);
-    const artilleryCount = 5 + Math.floor(Math.random() * 6);
-    for (let i = 0; i < artilleryCount; i++) {
-      const artilleryAngle = desiredAngle + (Math.random() - 0.5) * 0.2;
-      let artillery = new Bullet(unit.x, unit.y, artilleryAngle, ARTILLERY_BULLET_CONFIG.speed, unit, target);
-      artillery.lifetime = ARTILLERY_BULLET_CONFIG.lifetime;
-      artillery.damage = ARTILLERY_BULLET_CONFIG.damage;
-      artillery.splashRadius = ARTILLERY_BULLET_CONFIG.splashRadius;
-      artillery.splashDamage = ARTILLERY_BULLET_CONFIG.splashDamage;
-      artillery.color = "0,255,0";
-      gameState.bullets.push(artillery);
-    }
-    unit.lastArtilleryAttack = now;
+  const desiredAngle = Math.atan2(target.y - unit.y, target.x - unit.x);
+  const artilleryCount = 5 + Math.floor(Math.random() * 6);
+  for (let i = 0; i < artilleryCount; i++) {
+    const artilleryAngle = desiredAngle + (Math.random() - 0.5) * 0.2;
+    let artillery = new Bullet(unit.x, unit.y, artilleryAngle, ARTILLERY_BULLET_CONFIG.speed, unit, target);
+    artillery.lifetime = ARTILLERY_BULLET_CONFIG.lifetime;
+    artillery.damage = ARTILLERY_BULLET_CONFIG.damage;
+    artillery.splashRadius = ARTILLERY_BULLET_CONFIG.splashRadius;
+    artillery.splashDamage = ARTILLERY_BULLET_CONFIG.splashDamage;
+    artillery.color = "0,255,0";
+    artillery.isArtillery = true; // Отмечаем, что это артиллерийский снаряд
+    gameState.bullets.push(artillery);
   }
+  unit.lastArtilleryAttack = now;
+}
+
 
   // Отдельно обрабатываем лазерный выстрел, если цель в пределах
   if (currentDistance <= unit.laserRange && now - unit.lastLaserAttack >= unit.laserCooldown) {

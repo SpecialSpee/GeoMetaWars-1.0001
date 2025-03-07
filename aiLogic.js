@@ -17,7 +17,7 @@
 // Константы для тактических расстояний (эти значения можно корректировать по результатам тестирования)
 const FLANK_OFFSET = 700;       // расстояние до позиции сбоку для фланговой атаки
 const DIVERSION_OFFSET = 600;   // смещение для отвлекающего манёвра
-const SAFE_DISTANCE = 300;      // дистанция для элитных юнитов (безопасное отступление)
+const SAFE_DISTANCE = 400;      // дистанция для элитных юнитов (безопасное отступление)
 const BATTLE_ZONE_RADIUS = 150; // радиус, равный диапазону поражения оружия
 
 const PHASES = {
@@ -46,9 +46,9 @@ const UNIT_LIMITS = {
 
 
 
-const MIN_GOLD_FOR_EXPANSION = 190;
-const MIN_SILICON_FOR_EXPANSION = 190;
-const MIN_PLASMA_FOR_EXPANSION = 150;
+const MIN_GOLD_FOR_EXPANSION = 90;
+const MIN_SILICON_FOR_EXPANSION = 100;
+const MIN_PLASMA_FOR_EXPANSION = 40;
 
 const GREY_ZONE_RADIUS = 200;
 const ENEMY_ACTIVITY_THRESHOLD = 0;
@@ -717,56 +717,64 @@ function getBattleZone(center, radius) {
 //////////////////////////////////////////////////////////////
 // Функция назначения защитников для зданий
 function assignDefendersToBuildings() {
-  // Для каждого здания используем кэшированный поиск
+  // Определяем ключевые здания, для которых требуется гарнизон
   const keyBuildings = gameState.buildings.filter(b =>
     b.owner === "ai" &&
-    (b.type === "warehouse" || b.type === "repairWorkshop" || b.type === "beacon")
+    // Можно расширить список типов, если требуется
+    ["warehouse", "repairWorkshop", "beacon", "base", "base2", "base3", "barracks", "barracks2", "barracks3"].includes(b.type)
   );
 
+  // Формируем пул свободных боевых юнитов, которые не заняты защитой
+  let freeDefenders = gameState.units.filter(u =>
+    u.owner === "ai" &&
+    (u.type === "fighter" || u.type === "assault" || u.type === "elite") &&
+    (!u.defending) &&
+    (!u.commandQueue || u.commandQueue.length === 0)
+  );
+
+  // Для каждого здания проверяем, сколько уже назначено защитников и сколько нужно
   keyBuildings.forEach(building => {
-    const queryRange = { 
-      x: building.x - DEFENSE_RADIUS, 
-      y: building.y - DEFENSE_RADIUS, 
-      width: DEFENSE_RADIUS * 2, 
-      height: DEFENSE_RADIUS * 2 
+    // Определяем диапазон поиска вокруг здания (например, DEFENSE_RADIUS)
+    const queryRange = {
+      x: building.x - DEFENSE_RADIUS,
+      y: building.y - DEFENSE_RADIUS,
+      width: DEFENSE_RADIUS * 2,
+      height: DEFENSE_RADIUS * 2
     };
-    const nearbyUnits = getCachedObjectsInRange(queryRange);
-    
-    // Фильтрация уже назначенных защитников
-    const defenders = nearbyUnits.filter(u =>
+
+    // Определяем уже назначенных защитников, находящихся в пределах радиуса
+    const assignedDefenders = gameState.units.filter(u =>
       u.owner === "ai" &&
       (u.type === "fighter" || u.type === "assault" || u.type === "elite") &&
-      u.defending === true &&
-      u.commandQueue.length > 0
+      u.defending &&
+      Math.hypot(u.x - building.x, u.y - building.y) < DEFENSE_RADIUS
     );
-    
-    // Если гарнизон уже сформирован – блокируем здание
-    if (defenders.length >= DESIRED_DEFENDERS_PER_BUILDING) {
-      building.garrisonLocked = true;
-      return;
-    } else {
-      building.garrisonLocked = false;
-    }
-    
-    // Назначаем защитников из свободного резерва
-    const freeUnits = nearbyUnits.filter(u =>
-      u.owner === "ai" &&
-      (u.type === "fighter" || u.type === "assault" || u.type === "elite") &&
-      u.commandQueue.length === 0 &&
-      !u.defending
+
+    const needed = Math.max(0, DESIRED_DEFENDERS_PER_BUILDING - assignedDefenders.length);
+
+    // Отбираем кандидатов из пула свободных защитников, которые находятся достаточно близко
+    // Если таких недостаточно, можно назначать даже более удалённых, но по желанию ограничим поиск
+    const candidates = freeDefenders.filter(u =>
+      Math.hypot(u.x - building.x, u.y - building.y) < DEFENSE_RADIUS
     );
-    
-    const needed = DESIRED_DEFENDERS_PER_BUILDING - defenders.length;
-    freeUnits.slice(0, needed).forEach(unit => {
-      unit.commandQueue = [];
-      unit.defending = true;
+
+    // Назначаем из кандидатов нужное количество юнитов
+    for (let i = 0; i < needed && candidates.length > 0; i++) {
+      const defender = candidates.shift();
+      // Удаляем выбранного защитника из глобального пула, чтобы он не был назначен повторно
+      freeDefenders = freeDefenders.filter(u => u !== defender);
+
+      defender.commandQueue = [];
+      defender.defending = true;
+      // Небольшое случайное смещение, чтобы юниты не накладывались точно друг на друга
       const offsetX = (Math.random() - 0.5) * 20;
       const offsetY = (Math.random() - 0.5) * 20;
-      unit.commandQueue.push({ type: "move", x: building.x + offsetX, y: building.y + offsetY });
-      console.log(`Назначен защитник ${unit.type} для ${building.type} на (${Math.round(building.x)}, ${Math.round(building.y)})`);
-    });
+      defender.commandQueue.push({ type: "move", x: building.x + offsetX, y: building.y + offsetY });
+      console.log(`Назначен защитник ${defender.type} для ${building.type} на (${Math.round(building.x)}, ${Math.round(building.y)})`);
+    }
   });
 }
+
 
 function computeInfrastructureBalance() {
   // Ключевые здания для инфраструктуры
@@ -781,7 +789,7 @@ function computeInfrastructureBalance() {
 }
 //////////////////////////////////////////////////////////////
 // Функция расчёта безопасного маршрута атаки с обходом опасных зон
-function calculateSafeAttackRoute(start, target, checkRadius = 50, enemyThreshold = 3) {
+function calculateSafeAttackRoute(start, target, checkRadius = 550, enemyThreshold = 5) {
   const midPoint = { x: (start.x + target.x) / 2, y: (start.y + target.y) / 2 };
   const enemiesAtMid = getEnemiesInRange(midPoint, checkRadius).filter(e => e.owner === "player");
   if (enemiesAtMid.length >= enemyThreshold) {
@@ -790,7 +798,7 @@ function calculateSafeAttackRoute(start, target, checkRadius = 50, enemyThreshol
     const length = Math.hypot(dx, dy);
     const perpX = -dy / length;
     const perpY = dx / length;
-    const offsetMagnitude = 50;
+    const offsetMagnitude = 250;
     const safeMid = { x: midPoint.x + perpX * offsetMagnitude, y: midPoint.y + perpY * offsetMagnitude };
     const enemiesAtSafeMid = getEnemiesInRange(safeMid, checkRadius).filter(e => e.owner === "player");
     if (enemiesAtSafeMid.length < enemyThreshold) {
@@ -915,9 +923,9 @@ class AttackModule {
     this.lastAttackTime = performance.now();
     this.MIN_ATTACK_UNITS = 5;
     // Используем процент из общего резерва для атаки
-    this.deployPercentage = 0.7;
+    this.deployPercentage = 0.5;
     this.MAX_ATTACK_UNITS = 20;
-    this.attackCooldown = 10000; // задержка между атаками (мс)
+    this.attackCooldown = 35000; // задержка между атаками (мс)
 	this.sendAttackGroup = sendAttackGroup;  
   }
   selectDistractionTarget() {
@@ -1166,11 +1174,11 @@ function allKeyBuildingsGarrisoned() {
   return allGarrisoned;
 }
 
-// Начальный этап: гарантированное строительство 2 складов и 1 мастерской
+// Начальный этап: гарантированное строительство 3 складов и 1 мастерской
 function ensureInitialInfrastructure() {
-  // Добавляем 2 задания на строительство склада, если их ещё нет
-  if (countBuildings("warehouse", "ai") < 2 && canAfford(WAREHOUSE_COST, "ai")) {
-    for (let i = 0; i < 2 - countBuildings("warehouse", "ai"); i++) {
+  // Добавляем 3 задания на строительство склада, если их ещё нет
+  if (countBuildings("warehouse", "ai") < 3 && canAfford(WAREHOUSE_COST, "ai")) {
+    for (let i = 0; i < 3 - countBuildings("warehouse", "ai"); i++) {
       const pos = randomNearbyPosition(aiBase, 100);
       scheduleAIBuilding("warehouse", pos.x, pos.y, 0);
     }

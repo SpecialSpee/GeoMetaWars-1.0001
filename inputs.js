@@ -443,6 +443,7 @@ function gameLoop(time) {
   updateUnits(deltaTime);
   updateResources(deltaTime);
   updateFragments(deltaTime);
+  updateParticles(deltaTime);
   updateFogOfWar();
   
   // 2. Перестраиваем квадродерево с актуальными позициями
@@ -465,10 +466,11 @@ function gameLoop(time) {
     }
     return true;
   });
-    updateResourceUI();
+  updateResourceUI();
   // 4. Отрисовка
   renderGame();
   drawFragments();
+  renderParticles(); // отрисовываем искры
   
   gameLoopId = requestAnimationFrame(gameLoop);
 }

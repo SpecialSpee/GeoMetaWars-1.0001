@@ -7,7 +7,7 @@ const gameState = {
   resources: [],
   bullets: [],
   particles: [],
-  playerResources: { gold: 200, silicon: 300, plasma: 150 },
+  playerResources: { gold: 20000, silicon: 30000, plasma: 15000 },
   aiResources: { gold: 200, silicon: 300, plasma: 150 },
 	// Новые массивы для оптимизации
   attackers: [],    // для всех боевых юнитов (fighter, assault, elite)
@@ -26,16 +26,6 @@ const fragmentColors = {
   building: "#FFFF00"     // например, жёлтый для зданий (можно расширить для разных типов зданий)
 };
 
-
-
-// ======================
-// === Оригинальные константы и функции (оставляем без изменений)
-// ======================
-//const SPEED_WORKER = 100;
-//const SPEED_REPAIRMAN = 100;
-//const SPEED_FIGHTER = 70;
-//const SPEED_ASSAULT = 70;
-//const SPEED_ELITE = 50;
 
 
 
@@ -76,11 +66,11 @@ const WORKER_SPEED = 50;
 const FIGHTER_BULLET_CONFIG = { speed: 200, lifetime: 0.8, damage: 10 };
 const TURRET_BULLET_CONFIG = { speed: 300, lifetime: 1.2, damage: 15 };
 const AUTO_COLLECT_ENABLED = true;
-//const GRID_SIZE = 50;
+
 
 const MISSILE_CONFIG = { 
   speed: 130,          // Скорость полёта ракеты
-  lifetime: 3,         // Время жизни (секунд)
+  lifetime: 4,         // Время жизни (секунд)
   damage: 20,          // Основной урон при попадании
   splashRadius: 30,    // Радиус действия splash-урона
   splashDamage: 5     // Урон по объектам в области
