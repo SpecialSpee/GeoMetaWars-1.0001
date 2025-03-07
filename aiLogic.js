@@ -1503,7 +1503,7 @@ function attemptToHireMilitaryUnits() {
 function attemptToBuild(buildingType, requiredCount) {
   // Если количество зданий ниже требуемого, попытаемся построить новое
   if (countBuildings(buildingType, "ai") < requiredCount) {
-    const pos = randomNearbyPosition(aiBase, 100);
+    const pos = randomNearbyPosition(aiBase, 130);
     scheduleAIBuilding(buildingType, pos.x, pos.y, 0);
   }
 }
