@@ -13,6 +13,13 @@
 // MIN_GARRISON_COUNT. Константы GREY_ZONE_RADIUS и ENEMY_ACTIVITY_THRESHOLD определяются в другом файле.
 
 
+
+// Константы для тактических расстояний (эти значения можно корректировать по результатам тестирования)
+const FLANK_OFFSET = 700;       // расстояние до позиции сбоку для фланговой атаки
+const DIVERSION_OFFSET = 600;   // смещение для отвлекающего манёвра
+const SAFE_DISTANCE = 300;      // дистанция для элитных юнитов (безопасное отступление)
+const BATTLE_ZONE_RADIUS = 150; // радиус, равный диапазону поражения оружия
+
 const PHASES = {
   initialEconomy: "initialEconomy",
   basicDefense: "basicDefense",
@@ -57,7 +64,7 @@ const MIN_CLUSTER_DISTANCE = 100;      // Минимальное расстоя�
 const MAX_EXPANSION_DISTANCE = 100;   // Максимальное расстояние от существующей инфраструктуры для экспансии
 
 const MIN_GARRISON_COUNT = 10;  // Минимальное число юнитов для массовой атаки из кластера
-const MAX_GARRISON_COUNT = 100; // Если юнитов больше – часть остаётся в обороне
+const MAX_GARRISON_COUNT = 50; // Если юнитов больше – часть остаётся в обороне
 const CLUSTER_RADIUS = 100;    // Радиус для группировки построек в кластер
 
 const DESIRED_DEFENDERS_PER_BUILDING = 4;
@@ -697,11 +704,7 @@ function getClusterCenter(cluster) {
 
 //////////////////////////////////////////////////////////////
 // Функции атаки
-// Константы для тактических расстояний (эти значения можно корректировать по результатам тестирования)
-const FLANK_OFFSET = 1050;       // расстояние до позиции сбоку для фланговой атаки
-const DIVERSION_OFFSET = 900;   // смещение для отвлекающего манёвра
-const SAFE_DISTANCE = 1000;      // дистанция для элитных юнитов (безопасное отступление)
-const BATTLE_ZONE_RADIUS = 1400; // радиус, равный диапазону поражения оружия
+
 
 // Функция для выбора случайной точки в круге (зоне боевого соприкосновения)
 function getBattleZone(center, radius) {
@@ -710,144 +713,6 @@ function getBattleZone(center, radius) {
   return { x: center.x + r * Math.cos(angle), y: center.y + r * Math.sin(angle) };
 }
 
-function sendAttackGroup() {
-  // Формируем группу атакующих юнитов ИИ (fighter, assault, elite) без активных команд
-  const attackGroup = gameState.units.filter(u =>
-    u.owner === "ai" &&
-    (u.type === "fighter" || u.type === "assault" || u.type === "elite") &&
-    u.commandQueue.length === 0
-  );
-  if (attackGroup.length === 0) return;
-  
-  // Выбираем кандидата – слабый объект противника (например, через уже реализованную selectWeakTarget)
-  const candidate = this.selectWeakTarget();
-  
-  // Определяем область боевого соприкосновения вокруг кандидата:
-  // Находим все вражеские объекты в радиусе 150 единиц от кандидата
-  const nearbyObjects = getObjectsInRange({ x: candidate.x, y: candidate.y }, 150);
-  const enemyCluster = nearbyObjects.filter(obj =>
-    obj.owner === "player" && obj.health > 0
-  );
-  
-  let clusterCenter;
-  if (enemyCluster.length > 0) {
-    let sumX = 0, sumY = 0;
-    enemyCluster.forEach(obj => {
-      sumX += obj.x;
-      sumY += obj.y;
-    });
-    clusterCenter = { x: sumX / enemyCluster.length, y: sumY / enemyCluster.length };
-  } else {
-    clusterCenter = { x: candidate.x, y: candidate.y };
-  }
-  
-  // Определяем battle zone – безопасная зона вокруг центра кластера,
-  // где атака ведётся сначала по поддерживающим объектам (гарнизону, турелям)
-  const battleZone = getBattleZone(clusterCenter, BATTLE_ZONE_RADIUS);
-  
-  // Находим поддерживающие цели в battle zone – объекты типа turret и боевые юниты
-  let supportTargets = getObjectsInRange({ x: battleZone.x, y: battleZone.y }, BATTLE_ZONE_RADIUS)
-    .filter(obj =>
-      obj.owner === "player" &&
-      (obj.type === "turret" || obj.type === "fighter" || obj.type === "assault" || obj.type === "elite")
-    );
-  
-  // Выбираем из них ту, у которой здоровье минимально (наиболее слабую)
-  let finalTarget = candidate;
-  if (supportTargets.length > 0) {
-    finalTarget = supportTargets.reduce((prev, curr) => (prev.health < curr.health ? prev : curr));
-  }
-  
-  // Выбираем тактику атаки: 0 – прямая, 1 – фланговая, 2 – отвлекающий манёвр, 3 – гибридная
-  const tacticIndex = Math.floor(Math.random() * 4);
-  this.currentTactic = tacticIndex;
-  
-  switch (tacticIndex) {
-    case 0:
-      // Прямая атака: все юниты идут в battle zone, затем атакуют финальную цель
-      attackGroup.forEach(unit => {
-        unit.commandQueue = [];
-        unit.commandQueue.push({ type: "move", x: battleZone.x, y: battleZone.y });
-        unit.commandQueue.push({ type: "attack", target: finalTarget });
-      });
-      console.log("Тактика: Прямая атака (с концентрацией в battle zone)");
-      break;
-      
-    case 1:
-      // Фланговая атака: юниты занимают позиции сбоку от центра кластера, затем сходятся к battle zone и атакуют финальную цель
-      attackGroup.forEach((unit, index) => {
-        unit.commandQueue = [];
-        const baseAngle = Math.atan2(clusterCenter.y - unit.y, clusterCenter.x - unit.x);
-        const flankDirection = (index % 2 === 0) ? 1 : -1;
-        const flankX = clusterCenter.x + Math.cos(baseAngle + flankDirection * Math.PI / 2) * FLANK_OFFSET;
-        const flankY = clusterCenter.y + Math.sin(baseAngle + flankDirection * Math.PI / 2) * FLANK_OFFSET;
-        unit.commandQueue.push({ type: "move", x: flankX, y: flankY });
-        unit.commandQueue.push({ type: "move", x: battleZone.x, y: battleZone.y });
-        unit.commandQueue.push({ type: "attack", target: finalTarget });
-      });
-      console.log("Тактика: Фланговая атака (с концентрацией в battle zone)");
-      break;
-      
-    case 2:
-      // Отвлекающий манёвр: около 30% группы атакуют альтернативную цель (например, слабый склад или мастерскую), остальные идут в battle zone и атакуют финальную цель
-      const diversionSize = Math.max(1, Math.floor(attackGroup.length * 0.3));
-      const diversionGroup = attackGroup.slice(0, diversionSize);
-      const mainGroup = attackGroup.slice(diversionSize);
-      
-      // Выбираем альтернативную цель для отвлечения (через selectDistractionTarget)
-      const distractionTarget = this.selectDistractionTarget();
-      diversionGroup.forEach(unit => {
-        unit.commandQueue = [];
-        const offset = { x: (Math.random() - 0.5) * DIVERSION_OFFSET, y: (Math.random() - 0.5) * DIVERSION_OFFSET };
-        unit.commandQueue.push({ type: "move", x: distractionTarget.x + offset.x, y: distractionTarget.y + offset.y });
-        unit.commandQueue.push({ type: "attack", target: distractionTarget });
-      });
-      mainGroup.forEach(unit => {
-        unit.commandQueue = [];
-        unit.commandQueue.push({ type: "move", x: battleZone.x, y: battleZone.y });
-        unit.commandQueue.push({ type: "attack", target: finalTarget });
-      });
-      console.log("Тактика: Отвлекающий манёвр (с концентрацией в battle zone)");
-      break;
-      
-    case 3:
-      // Гибридная тактика: элитные юниты остаются на безопасной дистанции, остальные атакуют из battle zone
-      attackGroup.forEach(unit => {
-        unit.commandQueue = [];
-        if (unit.type === "elite") {
-          const angleToCluster = Math.atan2(clusterCenter.y - unit.y, clusterCenter.x - unit.x);
-          const holdX = clusterCenter.x - Math.cos(angleToCluster) * SAFE_DISTANCE;
-          const holdY = clusterCenter.y - Math.sin(angleToCluster) * SAFE_DISTANCE;
-          unit.commandQueue.push({ type: "move", x: holdX, y: holdY });
-          unit.commandQueue.push({ type: "attack", target: finalTarget });
-        } else {
-          unit.commandQueue.push({ type: "move", x: battleZone.x, y: battleZone.y });
-          unit.commandQueue.push({ type: "attack", target: finalTarget });
-        }
-      });
-      console.log("Тактика: Гибридная (разделение ролей с концентрацией в battle zone)");
-      break;
-  }
-  this.lastAttackTime = performance.now();
-}
-
-
-
-//function sendAttackGroupFromCluster(units, clusterCenter) {
-//  const target = playerBase;
-//  units.forEach((unit, index) => {
-//    let baseAngle = Math.atan2(target.y - clusterCenter.y, target.x - clusterCenter.x);
-//    let offset = ((index / units.length) - 0.5) * (Math.PI / 6);
-//    let attackAngle = baseAngle + offset + (Math.random() - 0.5) * 0.1;
-//    let attackTarget = {
-//      x: target.x + Math.cos(attackAngle) * (50 + Math.random() * 50),
-//      y: target.y + Math.sin(attackAngle) * (50 + Math.random() * 50)
-//    };
-//    unit.commandQueue = [];
-//    unit.commandQueue.push({ type: "move", x: attackTarget.x, y: attackTarget.y });
-//    unit.commandQueue.push({ type: "attack", target: target });
-//  });
-//}
 
 //////////////////////////////////////////////////////////////
 // Функция назначения защитников для зданий
@@ -1050,9 +915,10 @@ class AttackModule {
     this.lastAttackTime = performance.now();
     this.MIN_ATTACK_UNITS = 5;
     // Используем процент из общего резерва для атаки
-    this.deployPercentage = 0.3;
+    this.deployPercentage = 0.7;
     this.MAX_ATTACK_UNITS = 20;
-    this.attackCooldown = 60000; // задержка между атаками (мс)
+    this.attackCooldown = 10000; // задержка между атаками (мс)
+	this.sendAttackGroup = sendAttackGroup;  
   }
   selectDistractionTarget() {
   // Выбираем альтернативную цель для отвлекающего манёвра.
@@ -1111,90 +977,10 @@ formGarrisonFromReserve() {
     return bestCandidate || this.playerBase;
   }
   
-  sendAttackGroup() {
-  const garrison = this.formGarrisonFromReserve();
-  if (!garrison || garrison.length === 0) return;
+  // Вспомогательная функция для вычисления индивидуальной точки перегруппировки.
+// Для заданного юнита и центра безопасной зоны возвращает точку на окружности радиуса 'radius',
+// которая является диаметрально противоположной позиции юнита относительно центра.
 
-  // Выбор основной цели для атаки (с учетом уже реализованной логики выбора)
-  const target = this.selectWeakTarget();
-
-  // Выбираем тактику: 0 – прямая атака, 1 – фланговая, 2 – отвлекающий манёвр, 3 – гибридная тактика.
-  const tacticIndex = Math.floor(Math.random() * 4);
-  this.currentTactic = tacticIndex;  // Сохраняем выбранную тактику
-  switch (tacticIndex) {
-    case 0:
-      // Прямая атака – все юниты идут напрямую к цели
-      garrison.forEach(unit => {
-        unit.commandQueue = [];
-        unit.commandQueue.push({ type: "move", x: target.x, y: target.y });
-        unit.commandQueue.push({ type: "attack", target: target });
-        unit.defending = true;
-      });
-      console.log("Тактика: Прямая атака");
-      break;
-      
-    case 1:
-      // Фланговая атака – юниты сначала занимают позиции сбоку от цели, затем переходят к атаке
-      garrison.forEach((unit, index) => {
-        unit.commandQueue = [];
-        const baseAngle = Math.atan2(target.y - unit.y, target.x - unit.x);
-        const flankDirection = (index % 2 === 0) ? 1 : -1;
-        const flankOffset = 50; // Расстояние для фланговой позиции
-        const flankX = target.x + Math.cos(baseAngle + flankDirection * Math.PI / 2) * flankOffset;
-        const flankY = target.y + Math.sin(baseAngle + flankDirection * Math.PI / 2) * flankOffset;
-        unit.commandQueue.push({ type: "move", x: flankX, y: flankY });
-        // Переходим к основной атаке
-        unit.commandQueue.push({ type: "move", x: target.x, y: target.y });
-        unit.commandQueue.push({ type: "attack", target: target });
-        unit.defending = true;
-      });
-      console.log("Тактика: Фланговая атака");
-      break;
-      
-    case 2:
-      // Отвлекающий манёвр – выделяем примерно 30% группы для атаки дополнительной цели
-      const distractionSize = Math.max(1, Math.floor(garrison.length * 0.3));
-      const distractionGroup = garrison.slice(0, distractionSize);
-      const mainGroup = garrison.slice(distractionSize);
-
-      const distractionTarget = this.selectDistractionTarget();
-      distractionGroup.forEach(unit => {
-        unit.commandQueue = [];
-        unit.commandQueue.push({ type: "move", x: distractionTarget.x, y: distractionTarget.y });
-        unit.commandQueue.push({ type: "attack", target: distractionTarget });
-        unit.defending = true;
-      });
-      mainGroup.forEach(unit => {
-        unit.commandQueue = [];
-        unit.commandQueue.push({ type: "move", x: target.x, y: target.y });
-        unit.commandQueue.push({ type: "attack", target: target });
-        unit.defending = true;
-      });
-      console.log("Тактика: Отвлекающий манёвр");
-      break;
-      
-    case 3:
-      // Гибридная тактика – элитные юниты остаются на безопасной дистанции, остальные атакуют ближе
-      garrison.forEach(unit => {
-        unit.commandQueue = [];
-        if (unit.type === "elite") {
-          const safeDistance = unit.laserRange || 300;
-          const angleToTarget = Math.atan2(target.y - unit.y, target.x - unit.x);
-          const holdX = target.x - Math.cos(angleToTarget) * safeDistance;
-          const holdY = target.y - Math.sin(angleToTarget) * safeDistance;
-          unit.commandQueue.push({ type: "move", x: holdX, y: holdY });
-          unit.commandQueue.push({ type: "attack", target: target });
-        } else {
-          unit.commandQueue.push({ type: "move", x: target.x, y: target.y });
-          unit.commandQueue.push({ type: "attack", target: target });
-        }
-        unit.defending = true;
-      });
-      console.log("Тактика: Гибридная (разделение ролей)");
-      break;
-  }
-  this.lastAttackTime = performance.now();
-}
 
   
   update() {
@@ -1215,6 +1001,147 @@ let economicModule = new EconomicExpansionModule(gameState, aiBase);
 let defenseModule = new DefenseModule(gameState);
 let attackModule = new AttackModule(gameState, playerBase);
 
+function computeRegroupingPosition(unit, center, radius) {
+  let dx = unit.x - center.x;
+  let dy = unit.y - center.y;
+  let norm = Math.hypot(dx, dy);
+  if (norm === 0) return { x: center.x + radius, y: center.y };
+  // Возвращаем точку на окружности радиуса 'radius' по направлению от центра к юниту
+  return { x: center.x + (dx / norm) * radius, y: center.y + (dy / norm) * radius };
+}
+
+
+function sendAttackGroup() {
+  // Формируем группу атакующих юнитов ИИ (fighter, assault, elite), у которых нет активных команд.
+  const attackGroup = gameState.units.filter(u =>
+    u.owner === "ai" &&
+    (u.type === "fighter" || u.type === "assault" || u.type === "elite") &&
+    u.commandQueue.length === 0
+  );
+  if (attackGroup.length === 0) return;
+  
+  // Выбираем кандидата – слабый объект противника (например, через уже реализованную selectWeakTarget)
+  const candidate = this.selectWeakTarget();
+  
+  // Определяем область боевого соприкосновения вокруг кандидата:
+  // Находим все вражеские объекты в радиусе 150 единиц от кандидата.
+  const nearbyObjects = getObjectsInRange({ x: candidate.x, y: candidate.y }, 150);
+  const enemyCluster = nearbyObjects.filter(obj =>
+    obj.owner === "player" && obj.health > 0
+  );
+  
+  let clusterCenter;
+  if (enemyCluster.length > 0) {
+    let sumX = 0, sumY = 0;
+    enemyCluster.forEach(obj => {
+      sumX += obj.x;
+      sumY += obj.y;
+    });
+    clusterCenter = { x: sumX / enemyCluster.length, y: sumY / enemyCluster.length };
+  } else {
+    clusterCenter = { x: candidate.x, y: candidate.y };
+  }
+  
+  // Определяем "battle zone" как безопасную зону вокруг центра кластера.
+  // Вместо того чтобы задавать одну общую точку, для каждого юнита вычислим индивидуальное место.
+  // Здесь также ищем поддерживающие цели в battle zone.
+  let supportTargets = getObjectsInRange({ x: clusterCenter.x, y: clusterCenter.y }, BATTLE_ZONE_RADIUS)
+    .filter(obj =>
+      obj.owner === "player" &&
+      (obj.type === "turret" || obj.type === "fighter" || obj.type === "assault" || obj.type === "elite")
+    );
+  
+  // Финальная цель атаки — если в battle zone есть поддерживающие объекты, выбираем самый слабый из них.
+  let finalTarget = candidate;
+  if (supportTargets.length > 0) {
+    finalTarget = supportTargets.reduce((prev, curr) => (prev.health < curr.health ? prev : curr));
+  }
+  
+  // Выбираем тактику атаки: 0 – прямая, 1 – фланговая, 2 – отвлекающий манёвр, 3 – гибридная.
+  const tacticIndex = Math.floor(Math.random() * 4);
+  this.currentTactic = tacticIndex;
+  
+  switch (tacticIndex) {
+    case 0:
+      // Прямая атака: каждый юнит вычисляет индивидуальную точку перегруппировки в safe zone,
+      // затем переходит к атаке финальной цели.
+      attackGroup.forEach(unit => {
+        unit.commandQueue = [];
+        const regroupPos = computeRegroupingPosition(unit, clusterCenter, BATTLE_ZONE_RADIUS);
+		  unit.commandQueue.push({ type: "attack", target: finalTarget });
+        unit.commandQueue.push({ type: "move", x: regroupPos.x, y: regroupPos.y });
+        
+      });
+      console.log("Тактика: Прямая атака с индивидуальной перегруппировкой");
+      break;
+      
+    case 1:
+      // Фланговая атака: каждый юнит вычисляет точку перегруппировки, затем — смещается боком.
+      attackGroup.forEach((unit, index) => {
+        unit.commandQueue = [];
+        const regroupPos = computeRegroupingPosition(unit, clusterCenter, BATTLE_ZONE_RADIUS);
+        // Для фланга добавляем смещение по перпендикулярной оси.
+        const angle = Math.atan2(regroupPos.y - clusterCenter.y, regroupPos.x - clusterCenter.x);
+        const flankDirection = (index % 2 === 0) ? 1 : -1;
+        const flankX = regroupPos.x + Math.cos(angle + flankDirection * Math.PI / 2) * (FLANK_OFFSET * 0.1);
+        const flankY = regroupPos.y + Math.sin(angle + flankDirection * Math.PI / 2) * (FLANK_OFFSET * 0.1);
+		  unit.commandQueue.push({ type: "attack", target: finalTarget });
+        unit.commandQueue.push({ type: "move", x: flankX, y: flankY });
+        
+      });
+      console.log("Тактика: Фланговая атака с индивидуальной перегруппировкой");
+      break;
+      
+    case 2:
+      // Отвлекающий манёвр: примерно 30% группы отвлекаются на альтернативную цель,
+      // остальные используют индивидуальную перегруппировку.
+      const diversionSize = Math.max(1, Math.floor(attackGroup.length * 0.3));
+      const diversionGroup = attackGroup.slice(0, diversionSize);
+      const mainGroup = attackGroup.slice(diversionSize);
+      
+      const distractionTarget = this.selectDistractionTarget();
+      
+      diversionGroup.forEach(unit => {
+        unit.commandQueue = [];
+        const regroupPos = computeRegroupingPosition(unit, clusterCenter, BATTLE_ZONE_RADIUS);
+		  unit.commandQueue.push({ type: "attack", target: distractionTarget });
+        unit.commandQueue.push({ type: "move", x: regroupPos.x, y: regroupPos.y });
+        
+      });
+      mainGroup.forEach(unit => {
+        unit.commandQueue = [];
+        const regroupPos = computeRegroupingPosition(unit, clusterCenter, BATTLE_ZONE_RADIUS);
+		  unit.commandQueue.push({ type: "attack", target: finalTarget });
+        unit.commandQueue.push({ type: "move", x: regroupPos.x, y: regroupPos.y });
+		  
+        
+      });
+      console.log("Тактика: Отвлекающий манёвр с индивидуальной перегруппировкой");
+      break;
+      
+    case 3:
+      // Гибридная тактика: элитные юниты остаются на безопасной дистанции, остальные – индивидуально перегруппируются.
+      attackGroup.forEach(unit => {
+        unit.commandQueue = [];
+        if (unit.type === "elite") {
+          const angle = Math.atan2(unit.y - clusterCenter.y, unit.x - clusterCenter.x);
+          const holdX = clusterCenter.x - Math.cos(angle) * SAFE_DISTANCE;
+          const holdY = clusterCenter.y - Math.sin(angle) * SAFE_DISTANCE;
+			unit.commandQueue.push({ type: "attack", target: finalTarget });
+          unit.commandQueue.push({ type: "move", x: holdX, y: holdY });
+          
+        } else {
+          const regroupPos = computeRegroupingPosition(unit, clusterCenter, BATTLE_ZONE_RADIUS);
+			unit.commandQueue.push({ type: "attack", target: finalTarget });
+          unit.commandQueue.push({ type: "move", x: regroupPos.x, y: regroupPos.y });
+          
+        }
+      });
+      console.log("Тактика: Гибридная (элитные держатся на SAFE_DISTANCE, остальные перегруппируются)");
+      break;
+  }
+  this.lastAttackTime = performance.now();
+}
 
 // Функция проверки, что все ключевые здания имеют достаточный гарнизон
 function allKeyBuildingsGarrisoned() {
@@ -1660,32 +1587,32 @@ function aiLogic() {
   }
   
   // Дополнительные обновления: перераспределение защитников и проверка резерва
-  updateGarrisonAssignments();
-  updateReservePool(30);
+  //updateGarrisonAssignments();
+  //updateReservePool(30);
 }
 
 // Далее запускается основной цикл логики AI, например:
 function gameLoopAI() {
   aiLogic();
   requestAnimationFrame(gameLoopAI);
+	
 }
 
 // Отдельный таймер, который раз в 30 секунд сбрасывает защиту и перераспределяет гарнизоны
 setInterval(() => {
-  // Проходим по всем военным юнитам, у которых нет активных команд
   gameState.units.forEach(u => {
     if (
       (u.type === "fighter" || u.type === "assault" || u.type === "elite") &&
       u.defending &&
-      u.commandQueue.length === 0
+      u.commandQueue.length === 0 &&
+      !u.attacking // добавляем проверку, что юнит не находится в активной атаке
     ) {
-      // Сбрасываем статус защиты, чтобы они могли быть перераспределены
       u.defending = false;
     }
   });
-  // Перераспределяем защитников вокруг ключевых зданий
   updateGarrisonAssignmentsClustered();
 }, 30000);
+
 
 // Первоначальное обновление гарнизонов и резерва
 updateGarrisonAssignments();

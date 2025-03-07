@@ -892,36 +892,66 @@ function moveUnit(unit, targetX, targetY, callback, spreadDone = false) {
     return;
   }
   unit.angle = Math.atan2(dy, dx);
-  const duration = distance / WORKER_SPEED; // время в секундах, если WORKER_SPEED в world-единицах/с
+  // Используем unit.speed, либо, если не задан, WORKER_SPEED (или другой подходящий базовый параметр)
+  const speed = unit.speed || WORKER_SPEED;
+  const duration = distance / speed; 
   const startTime = performance.now();
+
   function animate() {
     const currentTime = performance.now();
-    // Заменяем 500 на 1000, чтобы переводить мс в секунды корректно
     const elapsed = (currentTime - startTime) / 1000;
     const progress = Math.min(elapsed / duration, 1);
+
+    // Добавляем проверку наличия врагов во время движения:
+    // Если у юнита не определён диапазон атаки, можно задать значение по умолчанию (например, 150)
+    const range = unit.range || 150;
+    const enemies = getEnemiesInRange({ x: unit.x, y: unit.y }, range)
+                      .filter(e => e.owner !== unit.owner);
+    if (enemies.length > 0) {
+      // Если враги обнаружены, прерываем движение и переключаемся на атаку
+      unit.commandQueue = [];
+      // Выбираем ближайшего врага
+      const nearestEnemy = enemies.reduce((prev, curr) =>
+        Math.hypot(curr.x - unit.x, curr.y - unit.y) < Math.hypot(prev.x - unit.x, prev.y - unit.y)
+          ? curr : prev
+      );
+      unit.commandQueue.push({ type: "attack", target: nearestEnemy });
+      // Прерываем анимацию движения
+      if (unit.currentMovementAnimation) {
+        cancelAnimationFrame(unit.currentMovementAnimation);
+        unit.currentMovementAnimation = null;
+      }
+      return;
+    }
+
+    // Обновляем позицию юнита
     unit.x = startX + dx * progress;
     unit.y = startY + dy * progress;
+
     if (progress < 1) {
       unit.currentMovementAnimation = requestAnimationFrame(animate);
     } else {
       unit.currentMovementAnimation = null;
+      // Если реализована логика "spread" после достижения цели, можно её выполнить здесь,
+      // иначе вызываем callback по завершении движения
       if (!spreadDone) {
-        const spreadWorld = 20;
-       const angle = Math.random() * 2 * Math.PI;
-       const spreadX = targetX + spreadWorld * Math.cos(angle);
-       const spreadY = targetY + spreadWorld * Math.sin(angle);
-       moveUnit(unit, spreadX, spreadY, callback, true);
+        // Если требуется дополнительное разбрасывание, реализуйте здесь (например, вызов moveUnit с новыми координатами)
+        // Для простоты можно сразу вызвать callback
+        if (callback) callback();
       } else {
         if (callback) callback();
       }
     }
   }
+
+  // Если анимация уже запущена, отменяем её перед новым запуском
   if (unit.currentMovementAnimation) {
     cancelAnimationFrame(unit.currentMovementAnimation);
     unit.currentMovementAnimation = null;
   }
   animate();
 }
+
 
 function updateUnits(deltaTime) {
   gameState.units.forEach(unit => {

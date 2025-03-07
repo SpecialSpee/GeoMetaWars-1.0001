@@ -454,37 +454,61 @@ window.addEventListener("resize", resizeCanvas);
 
 resizeCanvas();
 /* === Спавн баз игрока и ИИ === */
-function getRandomBasePosition(margin) {
-  const side = Math.floor(Math.random() * 4);
-  let x, y;
-  switch (side) {
-    case 0:
-      x = margin + Math.random() * (worldWidth - 2 * margin);
-      y = margin;
-      break;
-    case 1:
-      x = worldWidth - margin;
-      y = margin + Math.random() * (worldHeight - 2 * margin);
-      break;
-    case 2:
-      x = margin + Math.random() * (worldWidth - 2 * margin);
-      y = worldHeight - margin;
-      break;
-    case 3:
-      x = margin;
-      y = margin + Math.random() * (worldHeight - 2 * margin);
-      break;
+function getRandomBasePosition(margin, minDistance, existingBase = null) {
+  let pos;
+  let valid = false;
+  while (!valid) {
+    // Выбираем случайную сторону (0 – верх, 1 – правый, 2 – низ, 3 – левый)
+    const side = Math.floor(Math.random() * 4);
+    let x, y;
+    switch (side) {
+      case 0:
+        x = margin + Math.random() * (worldWidth - 2 * margin);
+        y = margin;
+        break;
+      case 1:
+        x = worldWidth - margin;
+        y = margin + Math.random() * (worldHeight - 2 * margin);
+        break;
+      case 2:
+        x = margin + Math.random() * (worldWidth - 2 * margin);
+        y = worldHeight - margin;
+        break;
+      case 3:
+        x = margin;
+        y = margin + Math.random() * (worldHeight - 2 * margin);
+        break;
+    }
+    pos = { x, y };
+
+    // Если уже есть существующая база, проверяем расстояние
+    if (existingBase) {
+      const dist = Math.hypot(pos.x - existingBase.x, pos.y - existingBase.y);
+      if (dist >= minDistance) {
+        valid = true;
+      }
+    } else {
+      valid = true;
+    }
   }
-  return { x, y };
+  return pos;
 }
+
 const margin = 200;
-const playerPos = getRandomBasePosition(margin);
-const aiPos = getRandomBasePosition(margin);
+const minBaseDistance = 1000; // минимальное расстояние между базами
+
+// Сначала генерируем позицию для базы игрока
+const playerPos = getRandomBasePosition(margin, minBaseDistance);
 const playerBase = new Building("base", "player", playerPos.x, playerPos.y);
-let aiBase = new Building("base", "ai", aiPos.x, aiPos.y);
+
+// Для базы ИИ передаем позицию базы игрока, чтобы гарантировать нужное расстояние
+let aiPos = getRandomBasePosition(margin, minBaseDistance, playerPos);
+const aiBase = new Building("base", "ai", aiPos.x, aiPos.y);
+
 gameState.buildings.push(playerBase, aiBase);
 camera.offsetX = canvas.width / 2 - playerBase.x * camera.scale;
 camera.offsetY = canvas.height / 2 - playerBase.y * camera.scale;
+
 // Ограничение зума
 const MAX_SCALE = 2;
 function setZoom(newScale, zoomCenterX, zoomCenterY) {
@@ -654,8 +678,8 @@ function dynamicMove(unit, target, deltaTime) {
   const distanceError = distance - desiredDistance;
   
   // Коэффициенты для прямого приближения и орбитального манёвра
-  const approachStrength = 0.3;
-  const orbitStrength = 0.3;
+  const approachStrength = 1.1;
+  const orbitStrength = 1.1;
   
   // Тангенциальный вектор (перпендикулярен направлению "носа")
   const tanX = -frontDirY;
@@ -680,7 +704,7 @@ function dynamicMove(unit, target, deltaTime) {
   unit.vy = unit.vy * damping + ay * deltaTime;
   
   // Ограничиваем максимальную скорость
-  const maxSpeed = 70;
+  const maxSpeed = 50;
   const currentSpeed = Math.hypot(unit.vx, unit.vy);
   if (currentSpeed > maxSpeed) {
     unit.vx = (unit.vx / currentSpeed) * maxSpeed;
@@ -716,7 +740,7 @@ function dynamicMoveAdvanced(unit, target, deltaTime) {
   const distanceError = distance - desiredDistance;
 
   // Базовое ускорение, направленное по линии к цели
-  const approachStrength = 0.3;
+  const approachStrength = 1.1;
   const ax_base = frontDirX * distanceError * approachStrength;
   const ay_base = frontDirY * distanceError * approachStrength;
 
@@ -724,7 +748,7 @@ function dynamicMoveAdvanced(unit, target, deltaTime) {
   let tacticAx = 0, tacticAy = 0;
   if (unit.tactic === "orbit") {
     // Орбитальное движение: постоянное тангенциальное ускорение, направленное перпендикулярно линии к цели
-    const orbitStrength = 50; // настройте по желанию
+    const orbitStrength = 100; // настройте по желанию
     // Перпендикуляр к desiredAngle
     const perpX = -Math.sin(desiredAngle);
     const perpY = Math.cos(desiredAngle);
@@ -732,7 +756,7 @@ function dynamicMoveAdvanced(unit, target, deltaTime) {
     tacticAy = perpY * orbitStrength;
   } else if (unit.tactic === "figure8") {
     // Атака по "восьмерке": периодическое изменение направления тангенциального ускорения
-    const figure8Strength = 50; // настройте по желанию
+    const figure8Strength = 100; // настройте по желанию
     // Частота, например, 1 циклов в секунду
     const t = performance.now() / 1000;
     const factor = Math.sin(t * 2 * Math.PI);
@@ -755,7 +779,7 @@ function dynamicMoveAdvanced(unit, target, deltaTime) {
   unit.vy = unit.vy * damping + ay * deltaTime;
 
   // Ограничиваем максимальную скорость – увеличьте, если хотите сильный импульс
-  const maxSpeed = 10;
+  const maxSpeed = 60;
   const currentSpeed = Math.hypot(unit.vx, unit.vy);
   if (currentSpeed > maxSpeed) {
     unit.vx = (unit.vx / currentSpeed) * maxSpeed;

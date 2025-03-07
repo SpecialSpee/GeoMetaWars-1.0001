@@ -72,9 +72,9 @@ let fogMap = [];               // двумерный массив для хра�
 let persistentFogMap = [];
 
 
-const WORKER_SPEED = 100;
+const WORKER_SPEED = 50;
 const FIGHTER_BULLET_CONFIG = { speed: 200, lifetime: 0.8, damage: 10 };
-const TURRET_BULLET_CONFIG = { speed: 200, lifetime: 1.2, damage: 15 };
+const TURRET_BULLET_CONFIG = { speed: 300, lifetime: 1.2, damage: 15 };
 const AUTO_COLLECT_ENABLED = true;
 //const GRID_SIZE = 50;
 
@@ -96,7 +96,7 @@ const MELEE_BULLET_CONFIG = {
 // Дополнительная константа для артиллерии
 const ARTILLERY_BULLET_CONFIG = {
   speed: 150,          // скорость снаряда
-  lifetime: 4,       // время жизни (секунд)
+  lifetime: 3,       // время жизни (секунд)
   damage: 40,          // базовый урон
   splashRadius: 50,    // радиус splash-урона
   splashDamage: 8     // урон по объектам в области
