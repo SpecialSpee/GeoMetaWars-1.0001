@@ -72,6 +72,11 @@ const DEFENSE_RADIUS = 200; // Радиус, в пределах которог�
 
 const GARRISON_COUNT_PER_CLUSTER = MIN_GARRISON_COUNT; // число юнитов, которые должны оставаться в кластере для защиты
 
+
+
+
+
+
 function canHireUnit(type) {
   const currentCount = gameState.units.filter(u => u.owner === "ai" && u.type === type).length;
   return currentCount < UNIT_LIMITS[type];
@@ -478,7 +483,7 @@ function aiBuildImprovedBuildings() {
       //console.log("Строится улучшенная казарма (barracks2) по координатам:", pos);
     }
   }
-  if (!hasBuilding("turret2", "ai") && canAfford(TURRET2_COST, "ai") && canBuild("turret2")) {
+  if (hasBuilding("barracks2", "ai") && canAfford(TURRET2_COST, "ai") && canBuild("turret2")) {
     const reference = getBuilding("base2", "ai") || aiBase;
     const pos = randomNearbyPosition(reference, 100);
     if (aiPlaceBuilding("turret2", pos.x, pos.y)) {
@@ -610,6 +615,7 @@ function attemptToHireWorkers() {
 }
 
 function aiHireRepairMan(repairWorkshop) {
+	
   if (repairWorkshop.repairman >= repairWorkshop.capacity) return;
   if (!canAfford(REPAIRMAN_COST, "ai")) return;
   gameState.aiResources.gold -= REPAIRMAN_COST.gold;
@@ -1593,6 +1599,7 @@ function aiLogic() {
       console.log("Фаза ИИ не распознана, выполняем стандартные действия.");
       break;
   }
+	checkAndSellUnprofitableBuildings();
   
   // Дополнительные обновления: перераспределение защитников и проверка резерва
   //updateGarrisonAssignments();

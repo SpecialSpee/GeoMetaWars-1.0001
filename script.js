@@ -1,3 +1,111 @@
+function triggerSale(building) {
+  // Проверяем, что здание всё ещё существует в gameState
+  if (!gameState.buildings.includes(building)) return;
+  
+  // Если здание является турелью, останавливаем её цикл
+  if (building.type === "turret" || building.type === "turret2") {
+    building.active = false; // Сбрасываем флаг активности
+    if (building.turretCycleId) {
+      cancelAnimationFrame(building.turretCycleId);
+      building.turretCycleId = null;
+    }
+  }
+  
+  // Удаляем здание из gameState
+  gameState.buildings = gameState.buildings.filter(b => b !== building);
+
+  // Вызываем эффект разрушения
+  spawnDestructionFragments(building.x, building.y, building.width, building.height, building.type);
+
+  // Рассчитываем возврат: 20% от затраченной стоимости
+  const refundPercent = 0.2;
+  const refundGold = building.buildCost.gold * refundPercent;
+  const refundSilicon = building.buildCost.silicon * refundPercent;
+  const refundPlasma = building.buildCost.plasma * refundPercent;
+
+  // Добавляем ресурсы игроку
+  gameState.playerResources.gold += refundGold;
+  gameState.playerResources.silicon += refundSilicon;
+  gameState.playerResources.plasma += refundPlasma;
+
+  // Обновляем интерфейс ресурсов
+  updateResourceUI();
+
+  // Отображаем уведомление
+  showWarning(`Здание продано! Возврат: Gold ${Math.round(refundGold)}, Silicon ${Math.round(refundSilicon)}, Plasma ${Math.round(refundPlasma)}`);
+}
+
+
+function createSaleIndicator() {
+  let indicator = document.getElementById("saleIndicator");
+  if (!indicator) {
+    indicator = document.createElement("div");
+    indicator.id = "saleIndicator";
+    indicator.style.position = "absolute";
+    indicator.style.height = "5px";
+    indicator.style.backgroundColor = "green";
+    indicator.style.borderRadius = "2px";
+    indicator.style.zIndex = "1001"; // выше canvas
+    document.body.appendChild(indicator);
+  }
+}
+
+function clearSaleIndicator() {
+  const indicator = document.getElementById("saleIndicator");
+  if (indicator) {
+    indicator.remove();
+  }
+}
+
+function checkAndSellUnprofitableBuildings() {
+  // Проходим по всем зданиям, принадлежащим ИИ
+  gameState.buildings.forEach(building => {
+    if (building.owner !== "ai") return; // только здания ИИ
+
+    // Исключаем критически важные здания
+    if (["base", "base2", "base3"].includes(building.type)) return;
+
+    // Если здоровье здания ниже 50% от максимума
+    if (building.health < building.maxHealth * 0.5) {
+      // Находим ремонтников в радиусе 100 единиц от здания
+      const nearbyRepairmen = getObjectsInRange({ x: building.x, y: building.y }, 100)
+                                .filter(u => u.owner === "ai" && u.type === "repairman");
+
+      // Дополнительно можно проверить, достаточно ли ресурсов для ремонта
+      const resourcesLow = (
+        gameState.aiResources.gold < 100 || 
+        gameState.aiResources.silicon < 100 || 
+        gameState.aiResources.plasma < 50
+      );
+
+      // Если нет ремонтников или ресурсы недостаточны для ремонта
+      if (nearbyRepairmen.length === 0 || resourcesLow) {
+        // Инициируем продажу здания
+        console.log("ИИ продает здание", building.type, "из-за низкого состояния и недостатка ремонта");
+        triggerSale(building);
+      }
+    }
+  });
+}
+
+
+// Функция, реализующая эффект ударной волны, которая отталкивает юнитов от центра взрыва
+function applyShockwave(x, y, radius, force) {
+  gameState.units.forEach(unit => {
+    if (unit.health > 0) { // применяем только к живым юнитам
+      const dx = unit.x - x;
+      const dy = unit.y - y;
+      const dist = Math.hypot(dx, dy);
+      if (dist < radius && dist > 0) {
+        const impact = (1 - dist / radius) * force;
+        unit.vx += (dx / dist) * impact;
+        unit.vy += (dy / dist) * impact;
+      }
+    }
+  });
+}
+
+
 function spawnExplosionEffect(x, y) {
   // Вспышка: крупная белая частица с коротким временем жизни
   const flashParticle = {
@@ -92,109 +200,64 @@ function renderParticles() {
   ctx.restore();
 }
 
-// Обновленная функция обработки пуль
 function updateBullets(deltaTime) {
   for (let i = gameState.bullets.length - 1; i >= 0; i--) {
-    let bullet = gameState.bullets[i];
+  let bullet = gameState.bullets[i];
 
-    if (bullet.isMissile && bullet.target && bullet.target.health > 0) {
-      const desiredAngle = Math.atan2(bullet.target.y - bullet.y, bullet.target.x - bullet.x);
-      bullet.angle = lerpAngle(bullet.angle, desiredAngle, 0.2);
-    }
+  // Обновляем позицию пули
+  bullet.x += Math.cos(bullet.angle) * bullet.speed * deltaTime;
+  bullet.y += Math.sin(bullet.angle) * bullet.speed * deltaTime;
 
-    bullet.x += Math.cos(bullet.angle) * bullet.speed * deltaTime;
-    bullet.y += Math.sin(bullet.angle) * bullet.speed * deltaTime;
-
-    const hitTargets = getObjectsInRange({ x: bullet.x, y: bullet.y }, 10)
+  // Проверяем попадание по целям
+  const hitTargets = getObjectsInRange({ x: bullet.x, y: bullet.y }, 10)
       .filter(target => target.owner !== bullet.shooter.owner && target.health > 0);
-    if (hitTargets.length > 0) {
-      hitTargets.forEach(target => {
-        target.health -= bullet.damage;
-        // Если это обычная пуля (не ракета и не артиллерия) – создаем эффект искр
-        if (!bullet.isMissile && !bullet.isArtillery) {
-          spawnSparkEffect(bullet.x, bullet.y);
-        }
+  if (hitTargets.length > 0) {
+    hitTargets.forEach(target => {
+      target.health -= bullet.damage;
+      // Если это ракета или артиллерия, создаём эффект взрыва
+      if (bullet.isMissile || bullet.isArtillery) {
+        spawnExplosionEffect(bullet.x, bullet.y);
+      } else {
+        spawnSparkEffect(bullet.x, bullet.y);
+      }
+      if (target.health <= 0) {
+        spawnDestructionFragments(target.x, target.y, target.width, target.height, target.type);
+      }
+    });
+    gameState.bullets.splice(i, 1);
+	  applyShockwave(bullet.x, bullet.y, bullet.splashRadius, 150);
+    continue;
+	  
+  }
+
+  bullet.lifetime -= deltaTime;
+  if (bullet.lifetime <= 0) {
+    if (bullet.isMissile || bullet.isArtillery) {
+      // Создаём эффект взрыва
+      spawnExplosionEffect(bullet.x, bullet.y);
+      
+      // Наносим splash-урон целям в области взрыва
+      const targets = gameState.units.concat(gameState.buildings).filter(target =>
+        target.owner !== bullet.shooter.owner &&
+        target.health > 0 &&
+        Math.hypot(target.x - bullet.x, target.y - bullet.y) <= bullet.splashRadius
+      );
+      targets.forEach(target => {
+        target.health -= bullet.splashDamage;
         if (target.health <= 0) {
           spawnDestructionFragments(target.x, target.y, target.width, target.height, target.type);
         }
       });
-      gameState.bullets.splice(i, 1);
-      continue;
+      
+      // Применяем эффект ударной волны: отталкивание юнитов от центра взрыва
+      // Значение force (здесь 50) можно подбирать экспериментально для достижения желаемого эффекта.
+      applyShockwave(bullet.x, bullet.y, bullet.splashRadius, 150);
     }
-
-    bullet.lifetime -= deltaTime;
-    if (bullet.lifetime <= 0) {
-      if (bullet.isMissile || bullet.isArtillery) {
-        spawnExplosionEffect(bullet.x, bullet.y);
-        const targets = gameState.units.concat(gameState.buildings).filter(target => {
-          return target.owner !== bullet.shooter.owner &&
-                 target.health > 0 &&
-                 Math.hypot(target.x - bullet.x, target.y - bullet.y) <= bullet.splashRadius;
-        });
-        targets.forEach(target => {
-          target.health -= bullet.splashDamage;
-          if (target.health <= 0) {
-            spawnDestructionFragments(target.x, target.y, target.width, target.height, target.type);
-          }
-        });
-      }
-      gameState.bullets.splice(i, 1);
-    }
+    gameState.bullets.splice(i, 1);
   }
 }
-
-// Пример обновления пуль с вызовом эффекта попадания (искры)
-// При попадании пули создается эффект искр (spawnSparkEffect) и/или взрыв, если это ракета.
-function updateBullets(deltaTime) {
-  for (let i = gameState.bullets.length - 1; i >= 0; i--) {
-    let bullet = gameState.bullets[i];
-
-    if (bullet.isMissile && bullet.target && bullet.target.health > 0) {
-      const desiredAngle = Math.atan2(bullet.target.y - bullet.y, bullet.target.x - bullet.x);
-      bullet.angle = lerpAngle(bullet.angle, desiredAngle, 0.2);
-    }
-
-    bullet.x += Math.cos(bullet.angle) * bullet.speed * deltaTime;
-    bullet.y += Math.sin(bullet.angle) * bullet.speed * deltaTime;
-
-    const hitTargets = getObjectsInRange({ x: bullet.x, y: bullet.y }, 10)
-      .filter(target => target.owner !== bullet.shooter.owner && target.health > 0);
-    if (hitTargets.length > 0) {
-      hitTargets.forEach(target => {
-        target.health -= bullet.damage;
-        // Если это обычная пуля (не ракета и не артиллерия) – создаем эффект искр
-        if (!bullet.isMissile && !bullet.isArtillery) {
-          spawnSparkEffect(bullet.x, bullet.y);
-        }
-        if (target.health <= 0) {
-          spawnDestructionFragments(target.x, target.y, target.width, target.height, target.type);
-        }
-      });
-      gameState.bullets.splice(i, 1);
-      continue;
-    }
-
-    bullet.lifetime -= deltaTime;
-    if (bullet.lifetime <= 0) {
-      // Для ракет и артиллерийских снарядов вызываем эффект взрыва с вспышкой
-      if (bullet.isMissile || bullet.isArtillery) {
-        spawnExplosionEffect(bullet.x, bullet.y);
-        const targets = gameState.units.concat(gameState.buildings).filter(target => {
-          return target.owner !== bullet.shooter.owner &&
-                 target.health > 0 &&
-                 Math.hypot(target.x - bullet.x, target.y - bullet.y) <= bullet.splashRadius;
-        });
-        targets.forEach(target => {
-          target.health -= bullet.splashDamage;
-          if (target.health <= 0) {
-            spawnDestructionFragments(target.x, target.y, target.width, target.height, target.type);
-          }
-        });
-      }
-      gameState.bullets.splice(i, 1);
-    }
-  }
 }
+
 
 // ============================
 // ==== Класс Quadtree ========
@@ -591,7 +654,7 @@ function renderPersistentFog() {
         const worldX = c * FOG_CELL_SIZE;
         const worldY = r * FOG_CELL_SIZE;
         const screenPos = worldToScreen(worldX, worldY);
-        ctx.fillStyle = "rgba(0,0,0,1)";
+        ctx.fillStyle = "rgba(0,0,0,0.1)";
         ctx.fillRect(screenPos.x, screenPos.y, cellScreenSize, cellScreenSize);
       } else if (fogMap[r][c] < 1) {
         // Если ячейка была открыта ранее, но сейчас не видна – слегка затемняем

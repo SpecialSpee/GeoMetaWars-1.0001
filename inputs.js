@@ -1,3 +1,9 @@
+let saleTimeout = null;
+let saleBuilding = null;
+let saleStartTime = 0;
+const saleDuration = 2000; // длительность удержания (2 секунды)
+const saleMoveThreshold = 5; // порог движения (в пикселях), при котором продажа отменяется
+
 // ==============================================
 // Переменные для работы с построением стен (build zone)
 let isWallDragging = false;
@@ -30,6 +36,59 @@ canvas.addEventListener("mousemove", e => {
 });
 canvas.addEventListener("mouseup", () => { isDragging = false; });
 canvas.addEventListener("mouseleave", () => { isDragging = false; });
+
+
+canvas.addEventListener("mousedown", e => {
+  isDragging = true;
+  dragStart = { x: e.clientX, y: e.clientY };
+  cameraStart = { offsetX: camera.offsetX, offsetY: camera.offsetY };
+
+  const worldPos = screenToWorld(e.clientX, e.clientY);
+  const clickedBuilding = gameState.buildings.find(b =>
+    worldPos.x >= (b.x - b.width / 2) &&
+    worldPos.x <= (b.x + b.width / 2) &&
+    worldPos.y >= (b.y - b.height / 2) &&
+    worldPos.y <= (b.y + b.height / 2) &&
+    b.owner === "player"
+  );
+  if (clickedBuilding) {
+    saleBuilding = clickedBuilding;
+    saleStartTime = performance.now();
+    createSaleIndicator();
+    saleTimeout = setTimeout(() => {
+      triggerSale(saleBuilding);
+      clearSaleIndicator();
+      saleTimeout = null;
+      saleBuilding = null;
+    }, saleDuration);
+  }
+});
+
+canvas.addEventListener("mousemove", e => {
+  if (isDragging) {
+    const dx = e.clientX - dragStart.x;
+    const dy = e.clientY - dragStart.y;
+    if (Math.hypot(dx, dy) > saleMoveThreshold && saleTimeout) {
+      clearTimeout(saleTimeout);
+      saleTimeout = null;
+      saleBuilding = null;
+      clearSaleIndicator();
+    }
+    camera.offsetX = cameraStart.offsetX + dx;
+    camera.offsetY = cameraStart.offsetY + dy;
+  }
+});
+
+canvas.addEventListener("mouseup", e => {
+  isDragging = false;
+  if (saleTimeout) {
+    clearTimeout(saleTimeout);
+    saleTimeout = null;
+    saleBuilding = null;
+    clearSaleIndicator();
+  }
+});
+
 
 // ==============================================
 // Обработчики перетаскивания карты – TOUCH
@@ -379,8 +438,15 @@ function countMissingTurrets() {
   return missing;
 }
 
-function hasBuilding(buildingType, owner) {
+function hasBuilding(buildingType, owner) {function hasBuilding(buildingType, owner) {
+  const found = gameState.buildings.some(b => b.owner === owner && b.type === buildingType);
+  console.log(`hasBuilding(${buildingType}, ${owner}) =>`, found, gameState.buildings.filter(b => b.type === "barracks"));
+  return found;
+}
+
   return gameState.buildings.some(b => b.owner === owner && b.type === buildingType);
+	console.log("Построены казармы:", gameState.buildings.filter(b => b.type === "barracks"));
+
 }
 
 function armySize(owner, unitType) {
@@ -433,6 +499,7 @@ function updateGameState(deltaTime) {
   updateBullets(deltaTime);
   updateFragments(deltaTime);
   updateFogOfWar();
+	
 }
 
 function gameLoop(time) {
@@ -451,13 +518,20 @@ function gameLoop(time) {
   gameState.buildings.forEach(b => quadtree.insert(b));
   gameState.units.forEach(u => quadtree.insert(u));
   gameState.resources.forEach(r => quadtree.insert(r));
-  
+  processBuildQueue() 
   // 3. Обработка столкновений пуль (updateBullets вызывается один раз за кадр)
   updateBullets(deltaTime);
   
   // 3.1 Запускаем авто-ремонт повреждённых объектов
   autoRepairDamagedObjects();
   
+	//Вращение турелей
+	gameState.buildings.forEach(building => {
+  if (building.type === "turret" || building.type === "turret2") {
+    updateTurret(building, gameState.enemies);
+  }
+});
+
   // Удаляем здания с нулевым или отрицательным здоровьем
   gameState.buildings = gameState.buildings.filter(b => {
     if (b.health <= 0) {
@@ -521,91 +595,128 @@ function startSelectionFrame(initialEvent) {
 }
 // Меню строительства
 // Функция, возвращающая HTML-строку для пункта меню с учетом условий
+// Функция, которая возвращает HTML для пункта меню, только если здание доступно для строительства
 function getMenuItem(buildingType, label) {
   let available = false;
   if (buildingType === "warehouse") {
-    available = (!hasBuilding("warehouse", "player") && canAfford(WAREHOUSE_COST, "player"));
+    // Склады можно строить сколько угодно – условие только по ресурсам
+    available = canAfford(WAREHOUSE_COST, "player");
   } else if (buildingType === "repairWorkshop") {
-    available = (!hasBuilding("repairWorkshop", "player") && canAfford(REPAIR_WORKSHOP_COST, "player"));
+    // Аналогично для мастерских
+    available = canAfford(REPAIR_WORKSHOP_COST, "player");
   } else if (buildingType === "barracks") {
-    available = (hasBuilding("warehouse", "player") &&
-                 hasBuilding("repairWorkshop", "player") &&
-                 !hasBuilding("barracks", "player") &&
-                 canAfford(BARRACKS_COST, "player"));  
+    // Казарма уникальна – должна быть только одна
+    available = (
+      hasBuilding("warehouse", "player") &&
+      hasBuilding("repairWorkshop", "player") &&
+      !hasBuilding("barracks", "player") &&
+      !buildQueue.some(order => order.type === "barracks") &&
+      canAfford(BARRACKS_COST, "player")
+    );
   } else if (buildingType === "turret") {
-    available = (hasBuilding("warehouse", "player") &&
-                 hasBuilding("barracks", "player") &&
-                 hasBuilding("repairWorkshop", "player") &&
-                 canAfford(TURRET_COST, "player"));
+    // Турели можно строить многократно, поэтому проверяем только предздания и ресурсы
+    available = (
+      hasBuilding("warehouse", "player") &&
+      hasBuilding("barracks", "player") &&
+      hasBuilding("repairWorkshop", "player") &&
+      canAfford(TURRET_COST, "player")
+    );
   } else if (buildingType === "wall") {
-    available = (hasBuilding("warehouse", "player") &&
-                 hasBuilding("barracks", "player") &&
-                 hasBuilding("repairWorkshop", "player") &&
-                 !hasBuilding("wall", "player") &&
-                 canAfford(WALL_COST, "player"));
+    // Стены можно строить многократно – убираем проверку уникальности
+    available = (
+      hasBuilding("warehouse", "player") &&
+      hasBuilding("barracks", "player") &&
+      hasBuilding("repairWorkshop", "player") &&
+      canAfford(WALL_COST, "player")
+    );
   } else if (buildingType === "beacon") {
-    available = (hasBuilding("warehouse", "player") &&
-                 hasBuilding("barracks", "player") &&
-                 hasBuilding("turret", "player") &&
-                 hasBuilding("repairWorkshop", "player") &&
-                 canAfford(BEACON_COST, "player"));
+    available = (
+      hasBuilding("warehouse", "player") &&
+      hasBuilding("barracks", "player") &&
+      hasBuilding("turret", "player") &&
+      hasBuilding("repairWorkshop", "player") &&
+      canAfford(BEACON_COST, "player")
+    );
   } else if (buildingType === "base2") {
-    available = (!hasBuilding("base2", "player") &&
-                 hasBuilding("warehouse", "player") &&
-                 hasBuilding("barracks", "player") &&
-                 hasBuilding("turret", "player") &&
-                 hasBuilding("repairWorkshop", "player") &&
-                 canAfford(BASE2_COST, "player"));
+    available = (
+      !hasBuilding("base2", "player") &&
+      hasBuilding("warehouse", "player") &&
+      hasBuilding("barracks", "player") &&
+      hasBuilding("turret", "player") &&
+      hasBuilding("repairWorkshop", "player") &&
+      hasBuilding("beacon", "player") &&
+      canAfford(BASE2_COST, "player")
+    );
   } else if (buildingType === "barracks2") {
-    available = (hasBuilding("warehouse", "player") &&
-                 hasBuilding("barracks", "player") &&
-                 hasBuilding("turret", "player") &&
-                 hasBuilding("repairWorkshop", "player") &&
-                 hasBuilding("beacon", "player") &&
-                 hasBuilding("base2", "player") &&
-                 !hasBuilding("barracks2", "player") &&
-                 canAfford(BARRACKS2_COST, "player"));
+    available = (
+      hasBuilding("base2", "player") &&
+      !hasBuilding("barracks2", "player") &&
+      canAfford(BARRACKS2_COST, "player")
+    );
   } else if (buildingType === "turret2") {
-    available = (hasBuilding("warehouse", "player") &&
-                 hasBuilding("barracks", "player") &&
-                 hasBuilding("turret", "player") &&
-                 hasBuilding("repairWorkshop", "player") &&
-                 hasBuilding("beacon", "player") &&
-                 hasBuilding("base2", "player") &&
-                 hasBuilding("barracks2", "player") &&
-                 canAfford(TURRET2_COST, "player"));
+    // Убираем уникальность: больше одной можно строить
+    available = (
+      hasBuilding("barracks2", "player") &&
+      canAfford(TURRET2_COST, "player")
+    );
   } else if (buildingType === "base3") {
-    available = (hasBuilding("warehouse", "player") &&
-                 hasBuilding("barracks", "player") &&
-                 hasBuilding("turret", "player") &&
-                 hasBuilding("repairWorkshop", "player") &&
-                 hasBuilding("beacon", "player") &&
-                 hasBuilding("base2", "player") &&
-                 hasBuilding("barracks2", "player") &&
-                 hasBuilding("turret2", "player") &&
-                 !hasBuilding("base3", "player") &&
-                 canAfford(BASE3_COST, "player"));
+    available = (
+      hasBuilding("base2", "player") &&
+      hasBuilding("barracks2", "player") &&
+      hasBuilding("turret2", "player") &&
+      !hasBuilding("base3", "player") &&
+      canAfford(BASE3_COST, "player")
+    );
   } else if (buildingType === "barracks3") {
-    available = (hasBuilding("warehouse", "player") &&
-                 hasBuilding("barracks", "player") &&
-                 hasBuilding("turret", "player") &&
-                 hasBuilding("repairWorkshop", "player") &&
-                 hasBuilding("beacon", "player") &&
-                 hasBuilding("base2", "player") &&
-                 hasBuilding("barracks2", "player") &&
-                 hasBuilding("turret2", "player") &&
-                 hasBuilding("base3", "player") &&
-                 !hasBuilding("barracks3", "player") &&
-                 canAfford(BARRACKS3_COST, "player"));
-  } else if (buildingType === "base") {
-    // Для базы первого типа: кнопка появляется, если у игрока есть либо база2, либо база3,
-    // и при этом база первого типа отсутствует, и достаточно ресурсов.
-    available = ( (hasBuilding("base2", "player") || hasBuilding("base3", "player")) &&
-                  !hasBuilding("base", "player") &&
-                  canAfford(BASE_COST, "player") );
+    available = (
+      hasBuilding("base3", "player") &&
+      !hasBuilding("barracks3", "player") &&
+      canAfford(BARRACKS3_COST, "player")
+    );
   }
-  
-  return `<div data-type="${buildingType}" ${available ? 'style="color:green;"' : ''}>${label}</div>`;
+  // Если здание недоступно, возвращаем пустую строку (то есть пункт не добавится в меню)
+  if (!available) return "";
+  // Если доступно, возвращаем пункт с зеленым текстом
+  return `<div data-type="${buildingType}" style="color:green;">${label}</div>`;
+}
+
+// Функция обновления содержимого меню строительства
+function updateBuildMenu(menu, building) {
+  let html = "";
+  html += getMenuItem("warehouse", "Склад");
+  html += getMenuItem("repairWorkshop", "Мастерская");
+  // Казарма появляется только если есть склад и мастерская, а сама ещё не построена
+  if (hasBuilding("warehouse", "player") && hasBuilding("repairWorkshop", "player")) {
+    html += getMenuItem("barracks", "Казарма");
+  }
+  if (hasBuilding("warehouse", "player") && hasBuilding("barracks", "player") && hasBuilding("repairWorkshop", "player")) {
+    html += getMenuItem("turret", "Турель");
+    html += getMenuItem("wall", "Стена");
+  }
+  if (hasBuilding("warehouse", "player") && hasBuilding("barracks", "player") &&
+      hasBuilding("turret", "player") && hasBuilding("repairWorkshop", "player")) {
+    html += getMenuItem("beacon", "Маяк");
+  }
+  // Продвинутые постройки
+  if (!hasBuilding("base2", "player") &&
+      hasBuilding("warehouse", "player") &&
+      hasBuilding("barracks", "player") &&
+      hasBuilding("turret", "player") &&
+      hasBuilding("repairWorkshop", "player") &&
+      hasBuilding("beacon", "player")) {
+    html += getMenuItem("base2", "База2");
+  } else if (hasBuilding("base2", "player")) {
+    html += getMenuItem("barracks2", "Казарма2");
+    html += getMenuItem("turret2", "Турель2");
+    // База появляется, если есть база2/3, а ее ещё нет
+    if ((hasBuilding("base2", "player") || hasBuilding("base3", "player")) && !hasBuilding("base", "player")) {
+      html += getMenuItem("base", "База");
+    }
+    html += getMenuItem("base3", "База3");
+    html += getMenuItem("barracks3", "Казарма3");
+	  
+  }
+  menu.innerHTML = html;
 }
 
 
@@ -648,7 +759,7 @@ function showBuildingMenu(building) {
     if (!hasBuilding("barracks2", "player")) {
       menuHTML += getMenuItem("barracks2", "Казарма2");
     }
-    if (hasBuilding("barracks2", "player") && !hasBuilding("turret2", "player")) {
+    if (hasBuilding("barracks2", "player")) {
       menuHTML += getMenuItem("turret2", "Турель2");
     }
     // Добавляем базу первого типа, если уже есть база2 или база3 и её нет
@@ -666,9 +777,17 @@ function showBuildingMenu(building) {
   }
   
   menu.innerHTML = menuHTML;
+  // Добавляем обработчик клика для каждого пункта меню
   menu.querySelectorAll("div").forEach(item => {
     item.addEventListener("click", e => {
       const buildingType = e.target.getAttribute("data-type");
+      // Дополнительная проверка для первой казармы:
+      if (buildingType === "barracks") {
+        if (hasBuilding("barracks", "player") || buildQueue.some(order => order.type === "barracks")) {
+          showWarning("Казарма уже построена");
+          return;
+        }
+      }
       showBuildZone(building, buildingType);
       menu.remove();
     });
@@ -676,6 +795,7 @@ function showBuildingMenu(building) {
   document.body.appendChild(menu);
   console.log("Зона для здания", building.type, "создана. Экранные координаты:", screenPos);
 }
+
 
 function clearBuildZones() {
   document.querySelectorAll(".buildZone").forEach(zone => zone.remove());
@@ -878,6 +998,15 @@ function placeBuilding(x, y, buildingType, owner) {
   // Если игрок строит турель, можно также запустить цикл автоматической стрельбы:
   if ((buildingType === "turret" || buildingType === "turret2") && owner === "player") {
     startTurretCycle(building);
+  }
+  
+  // Обновляем меню построек: если оно открыто, удаляем его,
+  // чтобы в нем сразу отразилось актуальное состояние (например, казарма исчезает).
+  if (owner === "player") {
+    const menu = document.getElementById("buildMenu");
+    if (menu) {
+      menu.remove();
+    }
   }
   
   return building;
