@@ -924,18 +924,6 @@ function renderWorkerResourceToken(ctx, token) {
 
 function renderResourceTokens() {
   ctx.save();
-  // Для каждого токена пересчитываем координаты и вызываем renderWorkerResourceToken
-  gameState.resourceTokens.forEach(function(token) {
-    var screenPos = worldToScreen(token.x, token.y);
-    token.x = screenPos.x;
-    token.y = screenPos.y;
-    renderWorkerResourceToken(ctx, token);
-  });
-  ctx.restore();
-}
-
-function renderResourceTokens() {
-  ctx.save();
   ctx.fillStyle = "gold"; // Можно менять цвет под разные ресурсы
   gameState.resourceTokens.forEach(token => {
     const screenPos = worldToScreen(token.x, token.y);
