@@ -7,15 +7,14 @@ const gameState = {
   resources: [],
   bullets: [],
   particles: [],
-  playerResources: { gold: 200, silicon: 300, plasma: 150 },
+  resourceTokens: [],	
+  playerResources: { gold: 20000, silicon: 30000, plasma: 15000 },
   aiResources: { gold: 200, silicon: 300, plasma: 150 },
 	// Новые массивы для оптимизации
   attackers: [],    // для всех боевых юнитов (fighter, assault, elite)
   repairmen: [],    // для ремонтников
   defenders: []     // если нужно отдельно хранить юнитов, назначенных для защиты
 };
-
-
 
 const fragmentColors = {
   worker: "#00FF00",      // зелёный для рабочих
@@ -27,12 +26,9 @@ const fragmentColors = {
 };
 
 
-
-
-
 // Пересмотр баланса цен – увеличены затраты для повышения стоимости юнитов и построек
 // Базовые постройки и инфраструктура
-const BASE_COST = { gold: 87, silicon: 103, plasma: 42 };
+const BASE_COST = { gold:67, silicon: 73, plasma: 32 };
 const WAREHOUSE_COST = { gold: 12, silicon: 5, plasma: 3 };
 const WORKER_COST = { gold: 4, silicon: 6, plasma: 3 };
 const REPAIR_WORKSHOP_COST = { gold: 15, silicon: 7, plasma: 4 };
@@ -45,11 +41,11 @@ const ELITE_COST = { gold: 58, silicon: 73, plasma: 36 };
 const TURRET_COST = { gold: 17, silicon: 21, plasma: 7 };
 const BEACON_COST = { gold: 27, silicon: 38, plasma: 12 };
 // Улучшенные постройки (2 уровень)
-const BASE2_COST = { gold: 111, silicon: 112, plasma: 53 };
+const BASE2_COST = { gold: 81, silicon: 92, plasma: 43 };
 const BARRACKS2_COST = { gold: 65, silicon: 72, plasma: 19 };
 const TURRET2_COST = { gold: 21, silicon: 36, plasma: 14 };
 // Поздняя игра (3 уровень)
-const BASE3_COST = { gold: 132, silicon: 148, plasma: 62 };
+const BASE3_COST = { gold: 92, silicon: 108, plasma: 52 };
 const BARRACKS3_COST = { gold: 73, silicon: 84, plasma: 24 };
 // Дополнительные оборонительные сооружения
 const WALL_COST = { gold: 8, silicon: 4, plasma: 2 };
@@ -73,12 +69,12 @@ const MISSILE_CONFIG = {
   lifetime: 4,         // Время жизни (секунд)
   damage: 20,          // Основной урон при попадании
   splashRadius: 30,    // Радиус действия splash-урона
-  splashDamage: 5     // Урон по объектам в области
+  splashDamage: 10     // Урон по объектам в области
 };
 
 const MELEE_BULLET_CONFIG = {
   speed: 250,     // скорость пули (можно настроить)
-  lifetime: 0.5,  // время жизни пули (короткое, так как это ближний бой)
+  lifetime: 0.8,  // время жизни пули (короткое, так как это ближний бой)
   damage: 5       // урон одной пули
 };
 
@@ -88,13 +84,13 @@ const ARTILLERY_BULLET_CONFIG = {
   speed: 150,          // скорость снаряда
   lifetime: 3,       // время жизни (секунд)
   damage: 40,          // базовый урон
-  splashRadius: 50,    // радиус splash-урона
-  splashDamage: 8     // урон по объектам в области
+  splashRadius: 70,    // радиус splash-урона
+  splashDamage: 18     // урон по объектам в области
 };
 
 // Дополнительные константы для динамичного поведения fighter
-const BASE_SPEED = 100;
-const TURN_SPEED = 70;
+const BASE_SPEED = 50;
+const TURN_SPEED = 40;
 const WANDER_STRENGTH = 100;
 const MIN_TURN_ANGLE = 200 * Math.PI / 180;
 const MAX_TURN_ANGLE = 300 * Math.PI / 180;
@@ -207,10 +203,16 @@ function startRepairProcess(repairman, command) {
   const costSiliconPerInterval = REPAIR_COST.silicon / intervalsPerCycle;
   const costPlasmaPerInterval = REPAIR_COST.plasma / intervalsPerCycle;
   
-  // Если здание уже полностью восстановлено, не запускаем ремонт
+  // Если здание уже полностью восстановлено – ничего не делаем
   if (command.target.health >= command.target.maxHealth) return;
   
   command.target.isRepairing = true;
+  
+  // Инициализируем таймер искр, если его ещё нет
+  if (command.target.repairSparkTimer === undefined) {
+    command.target.repairSparkTimer = 0;
+  }
+  
   command.target.repairIntervalId = setInterval(() => {
     // Если здание полностью восстановлено или уничтожено, прекращаем ремонт
     if (command.target.health >= command.target.maxHealth || command.target.health <= 0) {
@@ -225,7 +227,7 @@ function startRepairProcess(repairman, command) {
     // Определяем, какие ресурсы использовать (игрок или ИИ)
     const resources = command.target.owner === "player" ? gameState.playerResources : gameState.aiResources;
     
-    // Если ресурсов недостаточно, останавливаем ремонт
+    // Если ресурсов недостаточно – останавливаем ремонт
     if (resources.gold < costGoldPerInterval || resources.silicon < costSiliconPerInterval || resources.plasma < costPlasmaPerInterval) {
       showWarning("Недостаточно ресурсов для ремонта");
       clearInterval(command.target.repairIntervalId);
@@ -236,7 +238,7 @@ function startRepairProcess(repairman, command) {
       return;
     }
     
-    // Списываем ресурсы за интервал ремонта
+    // Списание ресурсов за интервал ремонта
     resources.gold -= costGoldPerInterval;
     resources.silicon -= costSiliconPerInterval;
     resources.plasma -= costPlasmaPerInterval;
@@ -248,18 +250,21 @@ function startRepairProcess(repairman, command) {
       command.target.health = command.target.maxHealth;
     }
     
-    // Если после ремонта здание полностью восстановлено, останавливаем цикл
-    if (command.target.health >= command.target.maxHealth) {
-      clearInterval(command.target.repairIntervalId);
-      command.target.repairIntervalId = null;
-      command.target.isRepairing = false;
-      repairman.busyRepair = false;
-      processCommandQueue(repairman);
+    // Обновляем таймер искр
+    command.target.repairSparkTimer += intervalTime;
+    // Раз в секунду (1000 мс) генерируем два коротких эффекта искр,
+    // но только если ремонтник находится достаточно близко к зданию (например, 50 единиц)
+    if (command.target.repairSparkTimer >= 1000) {
+      const dist = Math.hypot(repairman.x - command.target.x, repairman.y - command.target.y);
+      if (dist <= 50) {
+        spawnSparkEffect(command.target.x, command.target.y);
+        spawnSparkEffect(command.target.x, command.target.y);
+      }
+      command.target.repairSparkTimer = 0;
     }
     
   }, intervalTime);
 }
-
 
 // Универсальная функция запроса ремонта
 function requestRepair(target, workshop) {
@@ -342,23 +347,35 @@ function getBuildZoneRect(building) {
 
 // Функция проверки, находится ли точка (x, y) в зоне строительства какого-либо здания
 function isInAnyBuildZone(x, y) {
-  // Предположим, что максимальный радиус для поиска зон строительства – 100 единиц
+  // Ищем объекты в радиусе 100, которые являются Building
   const candidates = getObjectsInRange({ x, y }, 100)
     .filter(b => b instanceof Building);
+    
   for (let b of candidates) {
-    let currentMargin = (b.type === "warehouse") ? 10 : (b.buildZoneMultiplier || 20);
-    const bRect = {
-      left: b.x - b.width / 2 - currentMargin,
-      top: b.y - b.height / 2 - currentMargin,
-      right: b.x + b.width / 2 + currentMargin,
-      bottom: b.y + b.height / 2 + currentMargin
-    };
-    if (x >= bRect.left && x <= bRect.right && y >= bRect.top && y <= bRect.bottom) {
+    let left, top, right, bottom;
+    if (b.type === "wall") {
+      // Фиксированные размеры 10x10 для стен: центрированная зона [x-5, y-5, x+5, y+5]
+      left = b.x - 2;
+      top = b.y - 2;
+      right = b.x + 2;
+      bottom = b.y + 2;
+    } else {
+      // Для остальных зданий: склады – меньший margin, остальные – по buildZoneMultiplier или 20.
+      const margin = (b.type === "warehouse") ? 10 : (b.buildZoneMultiplier || 20);
+      left = b.x - b.width / 2 - margin;
+      top = b.y - b.height / 2 - margin;
+      right = b.x + b.width / 2 + margin;
+      bottom = b.y + b.height / 2 + margin;
+    }
+    
+    if (x >= left && x <= right && y >= top && y <= bottom) {
       return true;
     }
   }
   return false;
 }
+
+
 
 
 // Функция проверки, находится ли точка в пределах зоны союзных построек.

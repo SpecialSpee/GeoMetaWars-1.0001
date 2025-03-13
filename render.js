@@ -98,7 +98,7 @@ class Building {
     } else if (type === "turret") {
       this.width = 12; this.height = 12;
       this.health = 250; this.maxHealth = 250;
-      this.range = 250; this.fireRate = 70;
+      this.range = 250; this.fireRate = 120;
       this.lastFireTime = 0; this.angle = 0;
       this.target = null;
     } else if (type === "turret2") {
@@ -116,7 +116,7 @@ class Building {
       this.health = 300; this.maxHealth = 300;
       this.capacity = 5;
       this.repairman = 0;
-      this.controlRadius = 200;
+      this.controlRadius = 400;
     }
     // Новые типы зданий:
     else if (type === "base3") {
@@ -126,7 +126,7 @@ class Building {
       this.width = 20; this.height = 15;
       this.fighters = 0; this.health = 80; this.maxHealth = 80;
     } else if (type === "wall") {
-      this.width = 50; this.height = 5;
+      this.width = 3; this.height = 5;
       this.health = 400; this.maxHealth = 400;
     }
 	  // Добавляем стоимость здания:
@@ -207,11 +207,11 @@ class Unit {
   this.machineGunFireRate = 250;         // Интервал стрельбы пулемётом (мс)
   this.lastMachineGunFireTime = 0;
   // Ракетный режим (аналог турели2):
-  this.rocketRange = 300;               // Радиус для ракетного выстрела
+  this.rocketRange = 280;               // Радиус для ракетного выстрела
   this.rocketCooldown = 3000;           // Кулдаун ракетного выстрела (мс)
   this.lastRocketFireTime = performance.now();
   this.engagementRadius = 500;
-  this.range = 300; // <-- Добавляем общее свойство range для определения дистанции атаки
+  this.range = 280; // <-- Добавляем общее свойство range для определения дистанции атаки
 }
 
     // Новый тип: элитный (лингкор)
@@ -220,7 +220,7 @@ class Unit {
       this.vy = 0; // инициализация скорости по y
       this.health = 350;
       this.maxHealth = 350;
-      this.range = 200;
+      this.range = 500;
       this.meleeRange = 200;   // Если враг ближе 100 единиц – использовать шрапнель
       this.artilleryRange = 500;  // Если враг между 100 и 150 – использовать ракетный залп
       this.laserRange = 300;   // Если враг дальше 150 – использовать лазерный выстрел
@@ -443,18 +443,37 @@ starField.init();
 // Функция обновления поведения скоплений (swarm behavior)
 // Определяем её в глобальной области видимости render.js
 function updateSwarmBehavior(deltaTime) {
-  const neighborRadius = 15;         // Радиус для поиска соседей (в мировых координатах)
-  const cohesionFactor = 0.05;         // Влияние стремления к центру масс соседей
+  const neighborRadius = 15;         // Радиус для поиска соседей
+  const cohesionFactor = 0.05;         // Влияние стремления к центру масс
   const alignmentFactor = 0.05;        // Влияние выравнивания направления
   const separationDistance = 20;       // Минимальное расстояние между юнитами
   const separationSmoothing = 1;       // Коэффициент сглаживания отделения
-
-  // Этап 1: Когезия и выравнивание – ищем соседей через квадродерево
+  
+  // Обновляем поведение для idle‑юнитов
   gameState.units.forEach(unit => {
-    // Запрос соседей – фильтруем только юниты (исключая здания)
+    // Если юнит занят командами, не применяем эффект ожидания
+    if (unit.commandQueue && unit.commandQueue.length > 0) return;
+    
+    // Добавляем базовое покачивание, изменяя положение и масштаб
+    // Используем текущее время и уникальный фазовый сдвиг для каждого юнита (если его нет, генерируем)
+    if (unit.idlePhase === undefined) {
+      unit.idlePhase = Math.random() * Math.PI * 2;
+    }
+    const t = performance.now() / 1000; // время в секундах
+    // Настройки амплитуды перемещения и изменения масштаба (подберите значения по вкусу)
+    const posAmplitude = 2; // пикселей
+    const scaleAmplitude = 0.1; // +-5% изменения масштаба
+    
+    // Обновляем положение: добавляем колебание по x и y
+    unit.x += Math.sin(t + unit.idlePhase) * posAmplitude * deltaTime;
+    unit.y += Math.cos(t + unit.idlePhase) * posAmplitude * deltaTime;
+    
+    // Обновляем масштаб: например, плавное изменение от 0.95 до 1.05
+    unit.scale = 1 + Math.sin(t + unit.idlePhase) * scaleAmplitude;
+    
+    // Дополнительно можно применить базовую логику когезии/выравнивания, если нужно
     const neighbors = getObjectsInRange({ x: unit.x, y: unit.y }, neighborRadius)
       .filter(other => other !== unit && other.owner === unit.owner && other instanceof Unit);
-      
     const count = neighbors.length;
     if (count > 0) {
       let sumX = 0, sumY = 0, sumAngle = 0;
@@ -471,13 +490,11 @@ function updateSwarmBehavior(deltaTime) {
       unit.angle = lerpAngle(unit.angle, avgAngle, alignmentFactor * deltaTime);
     }
   });
-
-  // Этап 2: Отделение – используем квадродерево для поиска слишком близких соседей
+  
+  // Этап отделения – предотвращаем чрезмерное сближение юнитов
   gameState.units.forEach(unit => {
-    // Опять же, фильтруем только юниты
     const closeNeighbors = getObjectsInRange({ x: unit.x, y: unit.y }, separationDistance)
       .filter(other => other !== unit && other.owner === unit.owner && other instanceof Unit);
-      
     closeNeighbors.forEach(other => {
       const dx = unit.x - other.x;
       const dy = unit.y - other.y;
@@ -512,7 +529,6 @@ function updateSaleIndicator() {
     indicator.style.opacity = progress;
   }
 }
-
 // Функция обновления юнитов
 function updateUnits(deltaTime) {
   gameState.units.forEach(unit => {
@@ -583,6 +599,607 @@ function updateTurret(building) {
     building.angle += ROTATION_SPEED;
     // Здесь можно добавить поиск цели, например:
     // building.target = findNearestEnemy(building);
+  }
+}
+
+// Функция отрисовки ресурсов с эффектами вращения и пульсации
+function renderResource(resource) {
+  ctx.save();
+  ctx.translate(resource.x, resource.y);
+  const pulse = (Math.sin(performance.now() / 300) + 1) / 2;
+  const pulseRadius = resource.baseRadius ? resource.baseRadius * 1.5 + pulse * 5 : 15;
+  
+  if (resource.type === "gold") {
+    ctx.rotate(resource.rotation);
+    const grad = ctx.createRadialGradient(0, 0, resource.baseRadius * 0.3, 0, 0, resource.baseRadius);
+    grad.addColorStop(0, "#ffd700");
+    grad.addColorStop(0.7, "#ffc107");
+    grad.addColorStop(1, "#b8860b");
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.moveTo(resource.points[0].x, resource.points[0].y);
+    for (let i = 1; i < resource.points.length; i++) {
+      ctx.lineTo(resource.points[i].x, resource.points[i].y);
+    }
+    ctx.closePath();
+    ctx.fill();
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = "rgba(218,165,32,0.8)";
+    ctx.stroke();
+    
+    const pulseGrad = ctx.createRadialGradient(0, 0, resource.baseRadius, 0, 0, pulseRadius);
+    pulseGrad.addColorStop(0, "rgba(255,215,0,0.0)");
+    pulseGrad.addColorStop(1, "rgba(255,215,0,0.5)");
+    ctx.fillStyle = pulseGrad;
+    ctx.beginPath();
+    ctx.arc(0, 0, pulseRadius, 0, Math.PI * 2);
+    ctx.fill();
+    
+  } else if (resource.type === "silicon") {
+    ctx.rotate(performance.now() / 1000);
+    const size = 10;
+    ctx.fillStyle = "rgba(135,206,235,0.8)";
+    ctx.strokeStyle = "rgba(70,130,180,0.9)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    const sides = 6;
+    for (let i = 0; i < sides; i++) {
+      const angle = i * (Math.PI * 2) / sides;
+      const x = size * Math.cos(angle);
+      const y = size * Math.sin(angle);
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    
+    const pulseGrad = ctx.createRadialGradient(0, 0, size, 0, 0, pulseRadius);
+    pulseGrad.addColorStop(0, "rgba(128,128,128,0.0)");
+    pulseGrad.addColorStop(1, "rgba(128,128,128,0.5)");
+    ctx.fillStyle = pulseGrad;
+    ctx.beginPath();
+    ctx.arc(0, 0, pulseRadius, 0, Math.PI * 2);
+    ctx.fill();
+    
+  } else if (resource.type === "plasma") {
+    ctx.rotate(performance.now() / 1000);
+    const baseRadius = 8;
+    const pulseLocal = (Math.sin(performance.now() / 200) + 1) / 4 + 0.75;
+    const radius = baseRadius * pulseLocal;
+    const grad = ctx.createRadialGradient(0, 0, radius * 0.1, 0, 0, radius);
+    grad.addColorStop(0, "rgba(138,43,226,1)");
+    grad.addColorStop(0.5, "rgba(75,0,130,0.7)");
+    grad.addColorStop(1, "rgba(75,0,130,0)");
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(0, 0, radius, 0, Math.PI * 2);
+    ctx.fill();
+    
+    const pulseGrad = ctx.createRadialGradient(0, 0, radius, 0, 0, pulseRadius);
+    pulseGrad.addColorStop(0, "rgba(148,0,211,0.0)");
+    pulseGrad.addColorStop(1, "rgba(148,0,211,0.5)");
+    ctx.fillStyle = pulseGrad;
+    ctx.beginPath();
+    ctx.arc(0, 0, pulseRadius, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+// Функция движения юнитов с анимацией
+function moveUnit(unit, targetX, targetY, callback, spreadDone = false) {
+  const startX = unit.x, startY = unit.y;
+  const dx = targetX - startX, dy = targetY - startY;
+  const distance = Math.hypot(dx, dy);
+  if (distance < 5) {
+    if (callback) callback();
+    return;
+  }
+  unit.angle = Math.atan2(dy, dx);
+  // Используем unit.speed, либо, если не задан, WORKER_SPEED (или другой подходящий базовый параметр)
+  const speed = unit.speed || WORKER_SPEED;
+  const duration = distance / speed; 
+  const startTime = performance.now();
+
+  function animate() {
+  const currentTime = performance.now();
+  const elapsed = (currentTime - startTime) / 1000;
+  const progress = Math.min(elapsed / duration, 1);
+
+  // Выполняем проверку на появление врагов только для ИИ-юнитов (не игрока)
+  if (unit.owner !== "player" && unit.type !== "worker" && unit.type !== "repairman") {
+    const range = unit.range || 150;
+    const enemies = getEnemiesInRange({ x: unit.x, y: unit.y }, range)
+                      .filter(e => e.owner !== unit.owner);
+    if (enemies.length > 0) {
+      // Если враги обнаружены, прерываем движение и переключаемся на атаку
+      unit.commandQueue = [];
+      const nearestEnemy = enemies.reduce((prev, curr) =>
+        Math.hypot(curr.x - unit.x, curr.y - unit.y) < Math.hypot(prev.x - unit.x, prev.y - unit.y)
+          ? curr : prev
+      );
+      unit.commandQueue.push({ type: "attack", target: nearestEnemy });
+      if (unit.currentMovementAnimation) {
+        cancelAnimationFrame(unit.currentMovementAnimation);
+        unit.currentMovementAnimation = null;
+      }
+      return;
+    }
+  }
+
+  // Обновляем позицию юнита
+  unit.x = startX + dx * progress;
+  unit.y = startY + dy * progress;
+
+  if (progress < 1) {
+    unit.currentMovementAnimation = requestAnimationFrame(animate);
+  } else {
+    unit.currentMovementAnimation = null;
+    if (callback) callback();
+  }
+}
+
+if (unit.currentMovementAnimation) {
+  cancelAnimationFrame(unit.currentMovementAnimation);
+  unit.currentMovementAnimation = null;
+}
+animate();
+
+}
+
+function updateUnits(deltaTime) {
+  gameState.units.forEach(unit => {
+    // Если элитный юнит уже имеет цель, выполняем динамическую атаку независимо от наличия команд
+    if (unit.type === "elite" && unit.target && unit.health > 0) {
+      dynamicAttackElite(unit, unit.target, deltaTime);
+    }
+    // Если не элита в боевом режиме, обрабатываем команды, если они есть
+    else if (unit.commandQueue.length > 0) {
+      processCommandQueue(unit);
+    }
+    // Если команда пуста, выполняем idle-логику (для рабочих, ремонтников и пр.)
+    else {
+      unit.idleTimer += deltaTime;
+      if (unit.type === "worker" && unit.idleTimer >= 20) {
+        const base = unit.owner === "player" ? playerBase : aiBase;
+        startWorkerCycle(unit, base);
+        unit.idleTimer = 0;
+      }
+      if (unit.type === "repairman" && unit.idleTimer >= 20 && !unit.hiding) {
+        if (selectedUnits.includes(unit) || unit.manualOverride) {
+          unit.idleTimer = 0;
+        } else {
+          let workshops = gameState.buildings.filter(b => b.owner === unit.owner && b.type === "repairWorkshop");
+          if (workshops.length > 0) {
+            workshops.sort((a, b) =>
+              Math.hypot(unit.x - a.x, unit.y - a.y) - Math.hypot(unit.x - b.x, unit.y - b.y)
+            );
+            let nearestWorkshop = workshops[0];
+            const distance = Math.hypot(unit.x - nearestWorkshop.x, unit.y - nearestWorkshop.y);
+            const threshold = 50; // пороговое расстояние
+            if (distance > threshold) {
+              moveUnit(unit, nearestWorkshop.x, nearestWorkshop.y, () => {
+                unit.hiding = true;
+                animateMoveAndScale(unit, nearestWorkshop.x, nearestWorkshop.y, 0, 1000, () => {
+                  unit.hidden = true;
+                  unit.hiding = false;
+                  unit.inWorkshop = nearestWorkshop;
+                  unit.idleTimer = 0;
+                });
+              });
+            } else {
+              unit.hiding = true;
+              animateMoveAndScale(unit, nearestWorkshop.x, nearestWorkshop.y, 0, 1000, () => {
+                unit.hidden = true;
+                unit.hiding = false;
+                unit.inWorkshop = nearestWorkshop;
+                unit.idleTimer = 0;
+              });
+            }
+          }
+        }
+      }
+    }
+  });
+  
+  // Удаляем юниты с нулевым или отрицательным здоровьем и запускаем эффекты смерти
+  gameState.units = gameState.units.filter(unit => {
+    if (unit.health <= 0) {
+      removeUnit(unit);
+      return false;
+    }
+    return true;
+  });
+  
+  updateSwarmBehavior(deltaTime);
+}
+
+function findNearestResource(x, y, preferredType) {
+  const pos = { x, y };
+  // Ищем ресурсы в фиксированном радиусе (например, 200 единиц)
+  let candidates = getObjectsInRange(pos, 1000)
+    .filter(r => r.amount > 0 && r.type === preferredType);
+  if (candidates.length === 0) {
+    candidates = getObjectsInRange(pos, 1000)
+      .filter(r => r.amount > 0);
+  }
+  let nearest = null, minDist = Infinity;
+  candidates.forEach(r => {
+    const d = Math.hypot(r.x - x, r.y - y);
+    if (d < minDist) { minDist = d; nearest = r; }
+  });
+  return nearest;
+}
+
+function updateWorkerResourceToken(worker) {
+    if (worker.carriedResourceToken) {
+        const token = worker.carriedResourceToken;
+        token.x = worker.x + token.offsetX;
+        token.y = worker.y + token.offsetY;
+    }
+}
+
+function getPreferredResourceType(owner) {
+  const res = owner === "player" ? gameState.playerResources : gameState.aiResources;
+  const min = Math.min(res.gold, res.silicon, res.plasma);
+  if (min === res.gold) return "gold";
+  if (min === res.silicon) return "silicon";
+  return "plasma";
+}
+
+function spawnResourceToken(worker, resourceType) {
+  // Создаем объект токена – с фиксированным смещением от рабочего
+  const token = {
+    type: "resourceToken",
+    resourceType: resourceType,
+    offsetX: 1, // смещение вправо от рабочего (можно настроить)
+    offsetY: -2, // смещение вверх от рабочего
+    // Эти поля будут обновляться каждый кадр
+    x: worker.x + 10,
+    y: worker.y - 5
+  };
+  worker.carriedResourceToken = token;
+}
+
+function renderWorkerResourceToken(ctx, token) {
+  // Определяем базовые цвета в зависимости от типа ресурса
+  var baseColor, topColor, leftColor, rightColor;
+  if (token.resourceType === "gold") {
+    baseColor  = "#ffd700"; // золотой
+    topColor   = "#fffacd"; // светлее
+    leftColor  = "#ffd700"; // базовый
+    rightColor = "#b8860b"; // темнее
+  } else if (token.resourceType === "silicon") {
+    baseColor  = "silver";
+    topColor   = "#d3d3d3";
+    leftColor  = "silver";
+    rightColor = "#a9a9a9";
+  } else if (token.resourceType === "plasma") {
+    baseColor  = "cyan";
+    topColor   = "#e0ffff";
+    leftColor  = "cyan";
+    rightColor = "#008b8b";
+  } else {
+    baseColor  = "white";
+    topColor   = "#ffffff";
+    leftColor  = "#cccccc";
+    rightColor = "#999999";
+  }
+  
+  // Размер кубика (например, 8 пикселей) и смещение для эффекта 3D
+  var size = 6;
+  var half = size / 3;
+  var offset = 1; // задает "глубину" кубика
+
+  // Рисуем верхнюю грань (параллелограмм)
+  ctx.beginPath();
+  ctx.moveTo(token.x, token.y - half - offset);
+  ctx.lineTo(token.x + half, token.y - offset);
+  ctx.lineTo(token.x, token.y + half - offset);
+  ctx.lineTo(token.x - half, token.y - offset);
+  ctx.closePath();
+  ctx.fillStyle = topColor;
+  ctx.fill();
+  
+  // Рисуем левую грань
+  ctx.beginPath();
+  ctx.moveTo(token.x - half, token.y - offset);
+  ctx.lineTo(token.x, token.y + half - offset);
+  ctx.lineTo(token.x, token.y + half + offset);
+  ctx.lineTo(token.x - half, token.y + offset);
+  ctx.closePath();
+  ctx.fillStyle = leftColor;
+  ctx.fill();
+  
+  // Рисуем правую грань
+  ctx.beginPath();
+  ctx.moveTo(token.x + half, token.y - offset);
+  ctx.lineTo(token.x, token.y + half - offset);
+  ctx.lineTo(token.x, token.y + half + offset);
+  ctx.lineTo(token.x + half, token.y + offset);
+  ctx.closePath();
+  ctx.fillStyle = rightColor;
+  ctx.fill();
+}
+
+function renderResourceTokens() {
+  ctx.save();
+  // Для каждого токена пересчитываем координаты и вызываем renderWorkerResourceToken
+  gameState.resourceTokens.forEach(function(token) {
+    var screenPos = worldToScreen(token.x, token.y);
+    token.x = screenPos.x;
+    token.y = screenPos.y;
+    renderWorkerResourceToken(ctx, token);
+  });
+  ctx.restore();
+}
+
+function renderResourceTokens() {
+  ctx.save();
+  ctx.fillStyle = "gold"; // Можно менять цвет под разные ресурсы
+  gameState.resourceTokens.forEach(token => {
+    const screenPos = worldToScreen(token.x, token.y);
+    ctx.beginPath();
+    //ctx.arc(screenPos.x, screenPos.y, 3, 0, Math.PI * 2);
+    ctx.fill();
+  });
+  ctx.restore();
+}
+
+function startWorkerCycle(worker, warehouse) {
+  // Если рабочий уже несёт ресурс, сначала инициируем доставку
+  if (worker.carrying > 0) {
+    if (!worker.delivering) {
+      worker.delivering = true;
+      const deliveryBuilding = findNearestDeliveryBuilding(worker.x, worker.y, worker.owner);
+      if (deliveryBuilding) {
+        moveUnit(worker, deliveryBuilding.x, deliveryBuilding.y, function() {
+          // Прибыв на склад/базу – сбрасываем ресурс
+          if (worker.owner === "player") {
+            gameState.playerResources[getPreferredResourceType(worker.owner)] += worker.carrying;
+          } else {
+            gameState.aiResources[getPreferredResourceType(worker.owner)] += worker.carrying;
+          }
+          worker.carrying = 0;
+          delete worker.carriedResourceToken;
+          worker.delivering = false;
+          // После успешной доставки запускаем новый цикл
+          setTimeout(() => startWorkerCycle(worker, warehouse), 500);
+        });
+      } else {
+        // Если здания для доставки не найдено, сбрасываем флаг доставки
+        worker.delivering = false;
+      }
+    }
+    return;
+  }
+  
+  // Если рабочий пустой, выдаем задание на сбор нужного ресурса
+  const resourceType = getPreferredResourceType(worker.owner);
+  const resource = findNearestResource(worker.x, worker.y, resourceType);
+  if (!resource || resource.amount <= 0) {
+    setTimeout(() => startWorkerCycle(worker, warehouse), 1000);
+    return;
+  }
+  
+  // Двигаем рабочего к ресурсу
+  moveUnit(worker, resource.x, resource.y, function() {
+    setTimeout(function() {
+      // Если рабочий оказался слишком далеко от ресурса – перезапускаем цикл
+      if (Math.hypot(worker.x - resource.x, worker.y - resource.y) > 30) {
+        setTimeout(() => startWorkerCycle(worker, warehouse), 500);
+        return;
+      }
+      
+      // Собираем ресурс, если он ещё доступен
+      if (resource.amount > 0) {
+        resource.amount--;
+        worker.carrying = (worker.carrying || 0) + 3;
+        spawnSparkEffect(resource.x, resource.y);
+        spawnSparkEffect(resource.x, resource.y);
+        if (!worker.carriedResourceToken) {
+          spawnResourceToken(worker, resourceType);
+        }
+      }
+      
+      // После сбора сразу идём к доставке
+      const deliveryBuilding = findNearestDeliveryBuilding(worker.x, worker.y, worker.owner);
+      if (deliveryBuilding) {
+        worker.delivering = true;
+        moveUnit(worker, deliveryBuilding.x, deliveryBuilding.y, function() {
+          if (worker.owner === "player") {
+            gameState.playerResources[getPreferredResourceType(worker.owner)] += worker.carrying;
+          } else {
+            gameState.aiResources[getPreferredResourceType(worker.owner)] += worker.carrying;
+          }
+          worker.carrying = 0;
+          delete worker.carriedResourceToken;
+          worker.delivering = false;
+          setTimeout(() => startWorkerCycle(worker, warehouse), 500);
+        });
+      } else {
+        setTimeout(() => startWorkerCycle(worker, warehouse), 500);
+      }
+    }, 2000); // задержка для имитации сбора
+  });
+}
+
+function fireBullet(shooter, enemy) {
+  if (!shooter || shooter.health <= 0) return;
+  const dx = enemy.x - shooter.x, dy = enemy.y - shooter.y;
+  const angle = Math.atan2(dy, dx);
+  let bullet;
+  if (shooter.type === "turret2") {
+    bullet = new Bullet(shooter.x, shooter.y, angle, MISSILE_CONFIG.speed, shooter, enemy);
+    bullet.lifetime = MISSILE_CONFIG.lifetime;
+    bullet.damage = MISSILE_CONFIG.damage;
+    bullet.splashRadius = MISSILE_CONFIG.splashRadius;
+    bullet.splashDamage = MISSILE_CONFIG.splashDamage;
+    bullet.isMissile = true;
+    bullet.target = enemy;
+  } else {
+    let bulletConfig;
+    if (shooter.type === "turret") {
+      bulletConfig = TURRET_BULLET_CONFIG;
+    } else if (shooter.type === "fighter") {
+      bulletConfig = FIGHTER_BULLET_CONFIG;
+    } else {
+      bulletConfig = { speed: 300, lifetime: 1.5, damage: 10 };
+    }
+    bullet = new Bullet(shooter.x, shooter.y, angle, bulletConfig.speed, shooter, enemy);
+    bullet.lifetime = bulletConfig.lifetime;
+    bullet.damage = bulletConfig.damage;
+  }
+  if (shooter.type === "assault") {
+    bullet.color = "128,0,128"; // Фиолетовый для штурмовика
+  }
+  gameState.bullets.push(bullet);
+}
+
+function startFighterCycle(fighter) {
+  if (!fighter) return;
+  function cycle() {
+    if (fighter.health <= 0) return;
+    if (fighter.commandQueue.length > 0) {
+      processCommandQueue(fighter);
+      requestAnimationFrame(cycle);
+      return;
+    }
+    if (fighter.target && fighter.target.health > 0) {
+      dynamicAttack(fighter, fighter.target, 1/60);
+    } else {
+      let enemies = getEnemiesInRange({ x: fighter.x, y: fighter.y }, fighter.range)
+                     .filter(e => e.owner !== fighter.owner && e.health > 0);
+      if (enemies.length > 0) {
+        fighter.target = enemies.sort((a, b) =>
+          Math.hypot(a.x - fighter.x, a.y - fighter.y) - Math.hypot(b.x - fighter.x, b.y - fighter.y)
+        )[0];
+      }
+    }
+    requestAnimationFrame(cycle);
+  }
+  cycle();
+}
+
+function startFighterCycleAI(fighter) {
+  if (!fighter) return;
+  function cycle() {
+    if (fighter.health <= 0) return;
+    const enemies = getEnemiesInRange({ x: fighter.x, y: fighter.y }, fighter.range)
+                     .filter(e => e.owner !== fighter.owner && e.health > 0);
+    if (enemies.length > 0) {
+      fighter.target = enemies.sort((a, b) =>
+        Math.hypot(a.x - fighter.x, a.y - fighter.y) - Math.hypot(b.x - fighter.x, b.y - fighter.y)
+      )[0];
+      dynamicAttack(fighter, fighter.target, 1/60);
+    } else {
+      moveUnit(fighter, playerBase.x, playerBase.y, () => {});
+    }
+    requestAnimationFrame(cycle);
+  }
+  cycle();
+}
+
+function isTargetAlive(target) {
+  if (target instanceof Unit) {
+    return gameState.units.includes(target);
+  } else if (target instanceof Building) {
+    return gameState.buildings.includes(target);
+  }
+  return false;
+}
+
+function startTurretCycle(turret) {
+  turret.lastFireTime = 0;
+  turret.active = true; // Флаг, показывающий, что цикл активен
+  
+  function cycle() {
+    if (!turret.active) return; // Если турель деактивирована, прекращаем цикл
+    if (turret.health <= 0) return;
+    
+    // Если цель недействительна (отсутствует, мертва или слишком далеко), ищем новую
+    if (!turret.target || turret.target.health <= 0 ||
+       (Math.hypot(turret.target.x - turret.x, turret.target.y - turret.y) > turret.range)) {
+      const candidates = getEnemiesInRange({ x: turret.x, y: turret.y }, turret.range, turret.owner);
+      turret.target = candidates.length > 0 ? candidates[0] : null;
+    }
+    
+    // Если цель найдена, стреляем с учетом fireRate
+    if (turret.target) {
+      const now = performance.now();
+      if (now - turret.lastFireTime >= turret.fireRate) {
+        fireBullet(turret, turret.target);
+        turret.lastFireTime = now;
+      }
+    }
+    
+    turret.turretCycleId = requestAnimationFrame(cycle);
+  }
+  
+  turret.turretCycleId = requestAnimationFrame(cycle);
+}
+
+function drawCircularHP(x, y, radius, health, maxHealth) {
+  const startAngle = -Math.PI / 2;
+  const endAngle = startAngle + 2 * Math.PI * (health / maxHealth);
+  ctx.beginPath();
+  ctx.arc(x, y, radius, 0, 2 * Math.PI);
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = "red";
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(x, y, radius, startAngle, endAngle);
+  ctx.strokeStyle = "green";
+  ctx.stroke();
+}
+
+function spawnParticles(x, y, color) {
+  const count = Math.floor(Math.random() * 3) + 3;
+  for (let i = 0; i < count; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = Math.random() * 50 + 50;
+    const particle = {
+      x: x, y: y,
+      vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
+      life: 0.2 + Math.random() * 0.5, maxLife: 0,
+      color: "yellow", radius: 1
+    };
+    particle.maxLife = particle.life;
+    gameState.particles.push(particle);
+  }
+}
+
+function processResourceDepletion() {
+  gameState.resources.slice().forEach(resource => {
+    if (resource.amount <= 0 && !resource.depleted) {
+      resource.depleted = true;
+      spawnParticles(resource.x, resource.y, "orange");
+      setTimeout(() => {
+        const idx = gameState.resources.indexOf(resource);
+        if (idx !== -1) gameState.resources.splice(idx, 1);
+        setTimeout(() => {
+          const x = Math.random() * (worldWidth - 40) + 10;
+          const y = Math.random() * (worldHeight - 40) + 10;
+          const newResource = new Resource(resource.type, x, y, resource.max, resource.max);
+          gameState.resources.push(newResource);
+        }, 50000);
+      }, 500);
+    }
+  });
+}
+
+function getMarkerPosition(offset, rect) {
+  const w = rect.width, h = rect.height;
+  const perimeter = 2 * (w + h);
+  let pos = offset % perimeter;
+  if (pos < w) {
+    return { x: rect.x + pos, y: rect.y };
+  } else if (pos < w + h) {
+    return { x: rect.x + w, y: rect.y + (pos - w) };
+  } else if (pos < 2 * w + h) {
+    return { x: rect.x + w - (pos - (w + h)), y: rect.y + h };
+  } else {
+    return { x: rect.x, y: rect.y + h - (pos - (2 * w + h)) };
   }
 }
 
@@ -2117,7 +2734,7 @@ ctx.restore();
    if (unit.type === "worker") {
   ctx.save();
 // Применяем масштабирование: увеличиваем размер в 2 раза
-  const scaleFactor = -0.5;
+  const scaleFactor = 0.7;
   ctx.scale(scaleFactor, scaleFactor);
   // Лёгкое покачивание, если юнит без команд
   const idleOffset = unit.commandQueue.length === 0 ? Math.sin(unit.idleTimer) * 2 : 0;
@@ -2434,7 +3051,8 @@ ctx.restore();
 
 	  else if (unit.type === "repairman") {
   ctx.save();
-  
+  const scaleFactor = 0.6;
+  ctx.scale(scaleFactor, scaleFactor);
   // Лёгкое покачивание, если юнит без команд
   const idleOffset = unit.commandQueue.length === 0 ? Math.sin(unit.idleTimer) * 2 : 0;
  // ctx.translate(unit.x, unit.y + idleOffset);
@@ -2738,13 +3356,18 @@ gameState.particles.forEach(p => {
   ctx.fill();
   ctx.globalAlpha = 1;
 });
-
-
+// Отрисовка токенов ресурсов
+  gameState.resourceTokens.forEach(token => {
+    renderWorkerResourceToken(ctx, token);
+  });
+renderResourceTokens(); // Включаем отрисовку токенов
   
   ctx.restore();
 	
 	// Если нужно отобразить динамичный туман:
   renderFogOfWar();
+	
+	
 
   // Если нужно отобразить постоянный туман:
   renderPersistentFog();
@@ -2754,513 +3377,5 @@ gameState.particles.forEach(p => {
   updateBase3NavButton();
 	// После отрисовки игрового мира обновляем индикатор продажи
   updateSaleIndicator();
-}
-// Функция отрисовки ресурсов с эффектами вращения и пульсации
-function renderResource(resource) {
-  ctx.save();
-  ctx.translate(resource.x, resource.y);
-  const pulse = (Math.sin(performance.now() / 300) + 1) / 2;
-  const pulseRadius = resource.baseRadius ? resource.baseRadius * 1.5 + pulse * 5 : 15;
-  
-  if (resource.type === "gold") {
-    ctx.rotate(resource.rotation);
-    const grad = ctx.createRadialGradient(0, 0, resource.baseRadius * 0.3, 0, 0, resource.baseRadius);
-    grad.addColorStop(0, "#ffd700");
-    grad.addColorStop(0.7, "#ffc107");
-    grad.addColorStop(1, "#b8860b");
-    ctx.fillStyle = grad;
-    ctx.beginPath();
-    ctx.moveTo(resource.points[0].x, resource.points[0].y);
-    for (let i = 1; i < resource.points.length; i++) {
-      ctx.lineTo(resource.points[i].x, resource.points[i].y);
-    }
-    ctx.closePath();
-    ctx.fill();
-    ctx.lineWidth = 1;
-    ctx.strokeStyle = "rgba(218,165,32,0.8)";
-    ctx.stroke();
-    
-    const pulseGrad = ctx.createRadialGradient(0, 0, resource.baseRadius, 0, 0, pulseRadius);
-    pulseGrad.addColorStop(0, "rgba(255,215,0,0.0)");
-    pulseGrad.addColorStop(1, "rgba(255,215,0,0.5)");
-    ctx.fillStyle = pulseGrad;
-    ctx.beginPath();
-    ctx.arc(0, 0, pulseRadius, 0, Math.PI * 2);
-    ctx.fill();
-    
-  } else if (resource.type === "silicon") {
-    ctx.rotate(performance.now() / 1000);
-    const size = 10;
-    ctx.fillStyle = "rgba(135,206,235,0.8)";
-    ctx.strokeStyle = "rgba(70,130,180,0.9)";
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    const sides = 6;
-    for (let i = 0; i < sides; i++) {
-      const angle = i * (Math.PI * 2) / sides;
-      const x = size * Math.cos(angle);
-      const y = size * Math.sin(angle);
-      if (i === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
-    }
-    ctx.closePath();
-    ctx.fill();
-    ctx.stroke();
-    
-    const pulseGrad = ctx.createRadialGradient(0, 0, size, 0, 0, pulseRadius);
-    pulseGrad.addColorStop(0, "rgba(128,128,128,0.0)");
-    pulseGrad.addColorStop(1, "rgba(128,128,128,0.5)");
-    ctx.fillStyle = pulseGrad;
-    ctx.beginPath();
-    ctx.arc(0, 0, pulseRadius, 0, Math.PI * 2);
-    ctx.fill();
-    
-  } else if (resource.type === "plasma") {
-    ctx.rotate(performance.now() / 1000);
-    const baseRadius = 8;
-    const pulseLocal = (Math.sin(performance.now() / 200) + 1) / 4 + 0.75;
-    const radius = baseRadius * pulseLocal;
-    const grad = ctx.createRadialGradient(0, 0, radius * 0.1, 0, 0, radius);
-    grad.addColorStop(0, "rgba(138,43,226,1)");
-    grad.addColorStop(0.5, "rgba(75,0,130,0.7)");
-    grad.addColorStop(1, "rgba(75,0,130,0)");
-    ctx.fillStyle = grad;
-    ctx.beginPath();
-    ctx.arc(0, 0, radius, 0, Math.PI * 2);
-    ctx.fill();
-    
-    const pulseGrad = ctx.createRadialGradient(0, 0, radius, 0, 0, pulseRadius);
-    pulseGrad.addColorStop(0, "rgba(148,0,211,0.0)");
-    pulseGrad.addColorStop(1, "rgba(148,0,211,0.5)");
-    ctx.fillStyle = pulseGrad;
-    ctx.beginPath();
-    ctx.arc(0, 0, pulseRadius, 0, Math.PI * 2);
-    ctx.fill();
-  }
-  ctx.restore();
-}
-// Функция движения юнитов с анимацией
-function moveUnit(unit, targetX, targetY, callback, spreadDone = false) {
-  const startX = unit.x, startY = unit.y;
-  const dx = targetX - startX, dy = targetY - startY;
-  const distance = Math.hypot(dx, dy);
-  if (distance < 1) {
-    if (callback) callback();
-    return;
-  }
-  unit.angle = Math.atan2(dy, dx);
-  // Используем unit.speed, либо, если не задан, WORKER_SPEED (или другой подходящий базовый параметр)
-  const speed = unit.speed || WORKER_SPEED;
-  const duration = distance / speed; 
-  const startTime = performance.now();
-
-  function animate() {
-    const currentTime = performance.now();
-    const elapsed = (currentTime - startTime) / 1000;
-    const progress = Math.min(elapsed / duration, 1);
-
-    // Добавляем проверку наличия врагов во время движения:
-    // Если у юнита не определён диапазон атаки, можно задать значение по умолчанию (например, 150)
-    const range = unit.range || 150;
-    const enemies = getEnemiesInRange({ x: unit.x, y: unit.y }, range)
-                      .filter(e => e.owner !== unit.owner);
-    if (enemies.length > 0) {
-      // Если враги обнаружены, прерываем движение и переключаемся на атаку
-      unit.commandQueue = [];
-      // Выбираем ближайшего врага
-      const nearestEnemy = enemies.reduce((prev, curr) =>
-        Math.hypot(curr.x - unit.x, curr.y - unit.y) < Math.hypot(prev.x - unit.x, prev.y - unit.y)
-          ? curr : prev
-      );
-      unit.commandQueue.push({ type: "attack", target: nearestEnemy });
-      // Прерываем анимацию движения
-      if (unit.currentMovementAnimation) {
-        cancelAnimationFrame(unit.currentMovementAnimation);
-        unit.currentMovementAnimation = null;
-      }
-      return;
-    }
-
-    // Обновляем позицию юнита
-    unit.x = startX + dx * progress;
-    unit.y = startY + dy * progress;
-
-    if (progress < 1) {
-      unit.currentMovementAnimation = requestAnimationFrame(animate);
-    } else {
-      unit.currentMovementAnimation = null;
-      // Если реализована логика "spread" после достижения цели, можно её выполнить здесь,
-      // иначе вызываем callback по завершении движения
-      if (!spreadDone) {
-        // Если требуется дополнительное разбрасывание, реализуйте здесь (например, вызов moveUnit с новыми координатами)
-        // Для простоты можно сразу вызвать callback
-        if (callback) callback();
-      } else {
-        if (callback) callback();
-      }
-    }
-  }
-
-  // Если анимация уже запущена, отменяем её перед новым запуском
-  if (unit.currentMovementAnimation) {
-    cancelAnimationFrame(unit.currentMovementAnimation);
-    unit.currentMovementAnimation = null;
-  }
-  animate();
-}
-
-function updateUnits(deltaTime) {
-  gameState.units.forEach(unit => {
-    // Если элитный юнит уже имеет цель, выполняем динамическую атаку независимо от наличия команд
-    if (unit.type === "elite" && unit.target && unit.health > 0) {
-      dynamicAttackElite(unit, unit.target, deltaTime);
-    }
-    // Если не элита в боевом режиме, обрабатываем команды, если они есть
-    else if (unit.commandQueue.length > 0) {
-      processCommandQueue(unit);
-    }
-    // Если команда пуста, выполняем idle-логику (для рабочих, ремонтников и пр.)
-    else {
-      unit.idleTimer += deltaTime;
-      if (unit.type === "worker" && unit.idleTimer >= 20) {
-        const base = unit.owner === "player" ? playerBase : aiBase;
-        startWorkerCycle(unit, base);
-        unit.idleTimer = 0;
-      }
-      if (unit.type === "repairman" && unit.idleTimer >= 20 && !unit.hiding) {
-        if (selectedUnits.includes(unit) || unit.manualOverride) {
-          unit.idleTimer = 0;
-        } else {
-          let workshops = gameState.buildings.filter(b => b.owner === unit.owner && b.type === "repairWorkshop");
-          if (workshops.length > 0) {
-            workshops.sort((a, b) =>
-              Math.hypot(unit.x - a.x, unit.y - a.y) - Math.hypot(unit.x - b.x, unit.y - b.y)
-            );
-            let nearestWorkshop = workshops[0];
-            const distance = Math.hypot(unit.x - nearestWorkshop.x, unit.y - nearestWorkshop.y);
-            const threshold = 50; // пороговое расстояние
-            if (distance > threshold) {
-              moveUnit(unit, nearestWorkshop.x, nearestWorkshop.y, () => {
-                unit.hiding = true;
-                animateMoveAndScale(unit, nearestWorkshop.x, nearestWorkshop.y, 0, 1000, () => {
-                  unit.hidden = true;
-                  unit.hiding = false;
-                  unit.inWorkshop = nearestWorkshop;
-                  unit.idleTimer = 0;
-                });
-              });
-            } else {
-              unit.hiding = true;
-              animateMoveAndScale(unit, nearestWorkshop.x, nearestWorkshop.y, 0, 1000, () => {
-                unit.hidden = true;
-                unit.hiding = false;
-                unit.inWorkshop = nearestWorkshop;
-                unit.idleTimer = 0;
-              });
-            }
-          }
-        }
-      }
-    }
-  });
-  
-  // Удаляем юниты с нулевым или отрицательным здоровьем и запускаем эффекты смерти
-  gameState.units = gameState.units.filter(unit => {
-    if (unit.health <= 0) {
-      removeUnit(unit);
-      return false;
-    }
-    return true;
-  });
-  
-  updateSwarmBehavior(deltaTime);
-}
-
-function findNearestResource(x, y, preferredType) {
-  const pos = { x, y };
-  // Ищем ресурсы в фиксированном радиусе (например, 200 единиц)
-  let candidates = getObjectsInRange(pos, 1000)
-    .filter(r => r.amount > 0 && r.type === preferredType);
-  if (candidates.length === 0) {
-    candidates = getObjectsInRange(pos, 1000)
-      .filter(r => r.amount > 0);
-  }
-  let nearest = null, minDist = Infinity;
-  candidates.forEach(r => {
-    const d = Math.hypot(r.x - x, r.y - y);
-    if (d < minDist) { minDist = d; nearest = r; }
-  });
-  return nearest;
-}
-
-function getPreferredResourceType(owner) {
-  const res = owner === "player" ? gameState.playerResources : gameState.aiResources;
-  const min = Math.min(res.gold, res.silicon, res.plasma);
-  if (min === res.gold) return "gold";
-  if (min === res.silicon) return "silicon";
-  return "plasma";
-}
-
-function startWorkerCycle(worker, warehouse) {
-  // Если рабочий не существует или мёртв, завершаем цикл
-  if (!worker || worker.health <= 0 || !gameState.units.includes(worker)) return;
-
-  // Если рабочий уже что-то несёт, направляем его к ближайшему зданию для доставки
-  if (worker.carrying > 0) {
-    const deliveryBuilding = findNearestDeliveryBuilding(worker.x, worker.y, worker.owner);
-    if (deliveryBuilding) {
-      moveUnit(worker, deliveryBuilding.x, deliveryBuilding.y, () => {
-        const resourceType = getPreferredResourceType(worker.owner);
-        if (worker.owner === "player")
-          gameState.playerResources[resourceType] += worker.carrying;
-        else
-          gameState.aiResources[resourceType] += worker.carrying;
-        worker.carrying = 0;
-        setTimeout(() => startWorkerCycle(worker, warehouse), 1000);
-      });
-      return;
-    }
-  }
-
-  // Определяем нужный тип ресурса для рабочего
-  const resourceType = getPreferredResourceType(worker.owner);
-  const resource = findNearestResource(worker.x, worker.y, resourceType);
-
-  // Если ресурс отсутствует или его количество равно нулю, ждем и пробуем снова через задержку
-  if (!resource || resource.amount <= 0) {
-    //console.log("Ресурс недоступен или исчерпан, рабочий ждёт...", worker);
-    setTimeout(() => startWorkerCycle(worker, warehouse), 1000);
-    return;
-  }
-
 	
-	
-  // Вычисляем расстояние до ресурса и динамический таймаут
-  const distance = Math.hypot(resource.x - worker.x, resource.y - worker.y);
-  // Базовое время (например, 5000 мс) плюс 10 мс на каждую единицу расстояния (коэффициент можно подобрать)
-  const maxTravelTime = 10000 + distance * 10;
-  let reached = false;
-  const travelTimeout = setTimeout(() => {
-    if (!reached) {
-      //console.log("Рабочий не добрался до ресурса за", maxTravelTime, "мс, возвращается к складу.");
-      const deliveryBuilding = findNearestDeliveryBuilding(worker.x, worker.y, worker.owner);
-      if (deliveryBuilding) {
-        moveUnit(worker, deliveryBuilding.x, deliveryBuilding.y, () => {
-          setTimeout(() => startWorkerCycle(worker, warehouse), 1000);
-        });
-      } else {
-        setTimeout(() => startWorkerCycle(worker, warehouse), 1000);
-      }
-    }
-  }, maxTravelTime);
-
-  // Двигаем рабочего к ресурсу
-  moveUnit(worker, resource.x, resource.y, () => {
-    reached = true;  // рабочий добрался до цели
-    clearTimeout(travelTimeout);
-
-    // Прибыв, проверяем снова ресурс (на случай, если он исчез за время движения)
-    if (resource.amount > 0) {
-      resource.amount--;
-      worker.carrying = (worker.carrying || 0) + 10;
-    } else {
-      console.log("Ресурс исчез во время сбора, перезапуск цикла рабочего.");
-      setTimeout(() => startWorkerCycle(worker, warehouse), 1000);
-      return;
-    }
-
-    // После сбора направляем рабочего к ближайшему зданию для доставки
-    const deliveryBuilding = findNearestDeliveryBuilding(worker.x, worker.y, worker.owner);
-    if (deliveryBuilding) {
-      moveUnit(worker, deliveryBuilding.x, deliveryBuilding.y, () => {
-        if (worker.owner === "player")
-          gameState.playerResources[resourceType] += worker.carrying;
-        else
-          gameState.aiResources[resourceType] += worker.carrying;
-        worker.carrying = 0;
-        setTimeout(() => startWorkerCycle(worker, warehouse), 1000);
-      });
-    } else {
-      setTimeout(() => startWorkerCycle(worker, warehouse), 1000);
-    }
-  });
-}
-
-function fireBullet(shooter, enemy) {
-  if (!shooter || shooter.health <= 0) return;
-  const dx = enemy.x - shooter.x, dy = enemy.y - shooter.y;
-  const angle = Math.atan2(dy, dx);
-  let bullet;
-  if (shooter.type === "turret2") {
-    bullet = new Bullet(shooter.x, shooter.y, angle, MISSILE_CONFIG.speed, shooter, enemy);
-    bullet.lifetime = MISSILE_CONFIG.lifetime;
-    bullet.damage = MISSILE_CONFIG.damage;
-    bullet.splashRadius = MISSILE_CONFIG.splashRadius;
-    bullet.splashDamage = MISSILE_CONFIG.splashDamage;
-    bullet.isMissile = true;
-    bullet.target = enemy;
-  } else {
-    let bulletConfig;
-    if (shooter.type === "turret") {
-      bulletConfig = TURRET_BULLET_CONFIG;
-    } else if (shooter.type === "fighter") {
-      bulletConfig = FIGHTER_BULLET_CONFIG;
-    } else {
-      bulletConfig = { speed: 300, lifetime: 1.5, damage: 10 };
-    }
-    bullet = new Bullet(shooter.x, shooter.y, angle, bulletConfig.speed, shooter, enemy);
-    bullet.lifetime = bulletConfig.lifetime;
-    bullet.damage = bulletConfig.damage;
-  }
-  if (shooter.type === "assault") {
-    bullet.color = "128,0,128"; // Фиолетовый для штурмовика
-  }
-  gameState.bullets.push(bullet);
-}
-
-function startFighterCycle(fighter) {
-  if (!fighter) return;
-  function cycle() {
-    if (fighter.health <= 0) return;
-    if (fighter.commandQueue.length > 0) {
-      processCommandQueue(fighter);
-      requestAnimationFrame(cycle);
-      return;
-    }
-    if (fighter.target && fighter.target.health > 0) {
-      dynamicAttack(fighter, fighter.target, 1/60);
-    } else {
-      let enemies = getEnemiesInRange({ x: fighter.x, y: fighter.y }, fighter.range)
-                     .filter(e => e.owner !== fighter.owner && e.health > 0);
-      if (enemies.length > 0) {
-        fighter.target = enemies.sort((a, b) =>
-          Math.hypot(a.x - fighter.x, a.y - fighter.y) - Math.hypot(b.x - fighter.x, b.y - fighter.y)
-        )[0];
-      }
-    }
-    requestAnimationFrame(cycle);
-  }
-  cycle();
-}
-
-function startFighterCycleAI(fighter) {
-  if (!fighter) return;
-  function cycle() {
-    if (fighter.health <= 0) return;
-    const enemies = getEnemiesInRange({ x: fighter.x, y: fighter.y }, fighter.range)
-                     .filter(e => e.owner !== fighter.owner && e.health > 0);
-    if (enemies.length > 0) {
-      fighter.target = enemies.sort((a, b) =>
-        Math.hypot(a.x - fighter.x, a.y - fighter.y) - Math.hypot(b.x - fighter.x, b.y - fighter.y)
-      )[0];
-      dynamicAttack(fighter, fighter.target, 1/60);
-    } else {
-      moveUnit(fighter, playerBase.x, playerBase.y, () => {});
-    }
-    requestAnimationFrame(cycle);
-  }
-  cycle();
-}
-
-function isTargetAlive(target) {
-  if (target instanceof Unit) {
-    return gameState.units.includes(target);
-  } else if (target instanceof Building) {
-    return gameState.buildings.includes(target);
-  }
-  return false;
-}
-
-function startTurretCycle(turret) {
-  turret.lastFireTime = 0;
-  turret.active = true; // Флаг, показывающий, что цикл активен
-  
-  function cycle() {
-    if (!turret.active) return; // Если турель деактивирована, прекращаем цикл
-    if (turret.health <= 0) return;
-    
-    // Если цель недействительна (отсутствует, мертва или слишком далеко), ищем новую
-    if (!turret.target || turret.target.health <= 0 ||
-       (Math.hypot(turret.target.x - turret.x, turret.target.y - turret.y) > turret.range)) {
-      const candidates = getEnemiesInRange({ x: turret.x, y: turret.y }, turret.range, turret.owner);
-      turret.target = candidates.length > 0 ? candidates[0] : null;
-    }
-    
-    // Если цель найдена, стреляем с учетом fireRate
-    if (turret.target) {
-      const now = performance.now();
-      if (now - turret.lastFireTime >= turret.fireRate) {
-        fireBullet(turret, turret.target);
-        turret.lastFireTime = now;
-      }
-    }
-    
-    turret.turretCycleId = requestAnimationFrame(cycle);
-  }
-  
-  turret.turretCycleId = requestAnimationFrame(cycle);
-}
-
-function drawCircularHP(x, y, radius, health, maxHealth) {
-  const startAngle = -Math.PI / 2;
-  const endAngle = startAngle + 2 * Math.PI * (health / maxHealth);
-  ctx.beginPath();
-  ctx.arc(x, y, radius, 0, 2 * Math.PI);
-  ctx.lineWidth = 3;
-  ctx.strokeStyle = "red";
-  ctx.stroke();
-  ctx.beginPath();
-  ctx.arc(x, y, radius, startAngle, endAngle);
-  ctx.strokeStyle = "green";
-  ctx.stroke();
-}
-
-function spawnParticles(x, y, color) {
-  const count = Math.floor(Math.random() * 3) + 3;
-  for (let i = 0; i < count; i++) {
-    const angle = Math.random() * Math.PI * 2;
-    const speed = Math.random() * 50 + 50;
-    const particle = {
-      x: x, y: y,
-      vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
-      life: 0.2 + Math.random() * 0.5, maxLife: 0,
-      color: "yellow", radius: 1
-    };
-    particle.maxLife = particle.life;
-    gameState.particles.push(particle);
-  }
-}
-
-function processResourceDepletion() {
-  gameState.resources.slice().forEach(resource => {
-    if (resource.amount <= 0 && !resource.depleted) {
-      resource.depleted = true;
-      spawnParticles(resource.x, resource.y, "orange");
-      setTimeout(() => {
-        const idx = gameState.resources.indexOf(resource);
-        if (idx !== -1) gameState.resources.splice(idx, 1);
-        setTimeout(() => {
-          const x = Math.random() * (worldWidth - 40) + 10;
-          const y = Math.random() * (worldHeight - 40) + 10;
-          const newResource = new Resource(resource.type, x, y, resource.max, resource.max);
-          gameState.resources.push(newResource);
-        }, 50000);
-      }, 500);
-    }
-  });
-}
-
-function getMarkerPosition(offset, rect) {
-  const w = rect.width, h = rect.height;
-  const perimeter = 2 * (w + h);
-  let pos = offset % perimeter;
-  if (pos < w) {
-    return { x: rect.x + pos, y: rect.y };
-  } else if (pos < w + h) {
-    return { x: rect.x + w, y: rect.y + (pos - w) };
-  } else if (pos < 2 * w + h) {
-    return { x: rect.x + w - (pos - (w + h)), y: rect.y + h };
-  } else {
-    return { x: rect.x, y: rect.y + h - (pos - (2 * w + h)) };
-  }
 }

@@ -500,54 +500,67 @@ function updateGameState(deltaTime) {
   updateFragments(deltaTime);
   updateFogOfWar();
 	
+	// Обновляем токены ресурсов, собираем их из рабочих
+  // Сначала очищаем массив токенов
+  gameState.resourceTokens = [];
+  gameState.units.forEach(unit => {
+    if (unit.type === "worker" && unit.carriedResourceToken) {
+      updateWorkerResourceToken(unit);
+      gameState.resourceTokens.push(unit.carriedResourceToken);
+    }
+  });
+	
 }
 
 function gameLoop(time) {
   const deltaTime = (time - lastTime) / 1000;
   lastTime = time;
   
-  // 1. Обновляем динамические объекты (движение, эффекты, туман)
+  // Обновляем игровые объекты
   updateUnits(deltaTime);
   updateResources(deltaTime);
   updateFragments(deltaTime);
   updateParticles(deltaTime);
   updateFogOfWar();
   
-  // 2. Перестраиваем квадродерево с актуальными позициями
+  // Перестройка квадродерева с актуальными позициями
   quadtree.clear();
   gameState.buildings.forEach(b => quadtree.insert(b));
   gameState.units.forEach(u => quadtree.insert(u));
   gameState.resources.forEach(r => quadtree.insert(r));
-  processBuildQueue() 
-  // 3. Обработка столкновений пуль (updateBullets вызывается один раз за кадр)
-  updateBullets(deltaTime);
+  processBuildQueue();
   
-  // 3.1 Запускаем авто-ремонт повреждённых объектов
+  // Обработка пуль и авто-ремонт
+  updateBullets(deltaTime);
   autoRepairDamagedObjects();
   
-	//Вращение турелей
-	gameState.buildings.forEach(building => {
-  if (building.type === "turret" || building.type === "turret2") {
-    updateTurret(building, gameState.enemies);
-  }
-});
-
-  // Удаляем здания с нулевым или отрицательным здоровьем
-  gameState.buildings = gameState.buildings.filter(b => {
-    if (b.health <= 0) {
-      spawnDestructionFragments(b.x, b.y, b.width, b.height, b.type);
-      return false;
+  // Обновление турелей
+  gameState.buildings.forEach(building => {
+    if (building.type === "turret" || building.type === "turret2") {
+      updateTurret(building);
     }
-    return true;
   });
+  
+  // Удаление зданий с нулевым здоровьем
+  gameState.buildings = gameState.buildings.filter(b => b.health > 0);
+  
   updateResourceUI();
-  // 4. Отрисовка
+  
+  // Обновляем массив токенов ресурсов
+  updateGameState(deltaTime);
+  // Отрисовка токенов ресурсов
+  renderResourceTokens();
+  // Отрисовка игровых объектов
   renderGame();
+  
+  // Дополнительная отрисовка фрагментов и частиц
   drawFragments();
-  renderParticles(); // отрисовываем искры
+  renderParticles();
   
   gameLoopId = requestAnimationFrame(gameLoop);
 }
+
+
 
 // Сначала определим утилитную функцию для генерации случайной точки в круге:
 function getRandomTargetPoint(centerX, centerY, radius) {

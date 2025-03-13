@@ -13,26 +13,50 @@ function triggerSale(building) {
   
   // Удаляем здание из gameState
   gameState.buildings = gameState.buildings.filter(b => b !== building);
-
-  // Вызываем эффект разрушения
+  
+  // Проверяем и очищаем ссылки на здание у всех юнитов
+  gameState.units.forEach(unit => {
+    // Если цель юнита равна проданному зданию, сбрасываем её
+    if (unit.target === building) {
+      unit.target = null;
+    }
+    // Удаляем из очереди команд все команды, связанные с атакой на это здание
+    if (unit.commandQueue && unit.commandQueue.length > 0) {
+      unit.commandQueue = unit.commandQueue.filter(cmd => !(cmd.type === "attack" && cmd.target === building));
+    }
+  });
+  
+  // Вызываем эффект разрушения здания
   spawnDestructionFragments(building.x, building.y, building.width, building.height, building.type);
-
-  // Рассчитываем возврат: 20% от затраченной стоимости
+  
+  // Рассчитываем возврат: 20% от затраченной стоимости здания
   const refundPercent = 0.2;
   const refundGold = building.buildCost.gold * refundPercent;
   const refundSilicon = building.buildCost.silicon * refundPercent;
   const refundPlasma = building.buildCost.plasma * refundPercent;
-
+  
   // Добавляем ресурсы игроку
   gameState.playerResources.gold += refundGold;
   gameState.playerResources.silicon += refundSilicon;
   gameState.playerResources.plasma += refundPlasma;
-
-  // Обновляем интерфейс ресурсов
+  
+  // Обновляем UI и выводим уведомление
   updateResourceUI();
-
-  // Отображаем уведомление
   showWarning(`Здание продано! Возврат: Gold ${Math.round(refundGold)}, Silicon ${Math.round(refundSilicon)}, Plasma ${Math.round(refundPlasma)}`);
+  
+  // Дополнительная очистка: если здание хранится в других структурах (например, в квадродереве)
+  cleanUpBuildingReferences();
+}
+
+// Функция для обновления квадродерева (и других структур, если необходимо)
+function cleanUpBuildingReferences() {
+  if (typeof quadtree !== 'undefined' && quadtree !== null) {
+    quadtree.clear();
+    // Вставляем обновлённые объекты: здания, юниты, ресурсы
+    gameState.buildings.forEach(b => quadtree.insert(b));
+    gameState.units.forEach(u => quadtree.insert(u));
+    gameState.resources.forEach(r => quadtree.insert(r));
+  }
 }
 
 
@@ -87,7 +111,6 @@ function checkAndSellUnprofitableBuildings() {
     }
   });
 }
-
 
 // Функция, реализующая эффект ударной волны, которая отталкивает юнитов от центра взрыва
 function applyShockwave(x, y, radius, force) {
@@ -144,25 +167,47 @@ function spawnExplosionEffect(x, y) {
 
 // Функция создания эффекта искр при попадании пули
 function spawnSparkEffect(x, y) {
-  const sparkCount = 5 + Math.floor(Math.random() * 5);
-  for (let i = 0; i < sparkCount; i++) {
-    const angle = Math.random() * Math.PI * 2;
-    const speed = 50 + Math.random() * 50;
-    const life = 0.3 + Math.random() * 0.3;
-    const spark = {
-      x: x,
-      y: y,
-      vx: Math.cos(angle) * speed,
-      vy: Math.sin(angle) * speed,
-      life: life,
-      maxLife: life,
-      radius: 2,
-      color: "yellow",
-      flash: false
-    };
-    gameState.particles.push(spark);
+  // Количество пучков искр (от 2 до 4)
+  const clusterCount = 2 + Math.floor(Math.random() * 3);
+  
+  for (let c = 0; c < clusterCount; c++) {
+    // Центральный угол пучка (в радианах)
+    const clusterCenter = Math.random() * 2 * Math.PI;
+    // Узкий диапазон для пучка (от 0.1 до 0.4 радиана)
+    const clusterSpread = 0.1 + Math.random() * 0.3;
+    // Количество искр в пучке (от 3 до 5)
+    const sparksInCluster = 1 + Math.floor(Math.random() * 2);
+    
+    for (let i = 0; i < sparksInCluster; i++) {
+      // Выбираем угол в пределах пучка
+      const angle = clusterCenter + (Math.random() - 0.5) * clusterSpread;
+      // Устанавливаем скорость (меньше, чтобы искры выглядели тонкими)
+      const speed = 20 + Math.random() * 30;
+      // Время жизни искры
+      const life = 0.2 + Math.random() * 0.3;
+      // Длина искры – от 5 до 15 пикселей
+      const length = 3 + Math.random() * 7;
+      // Толщина – небольшая (например, 1 пиксель)
+      const thickness = 0.5;
+      
+      const spark = {
+        x: x,
+        y: y,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed,
+        life: life,
+        maxLife: life,
+        length: length,
+        thickness: thickness,
+        angle: angle,        // угол, по которому будет отрисована линия
+        color: "rgba(255,255,255,1)", // можно изменить по вкусу
+        type: "sparkLine"    // тип частицы – "sparkLine" для отрисовки как линия
+      };
+      gameState.particles.push(spark);
+    }
   }
 }
+
 
 // Функция обновления частиц (для вспышек, взрыва, искр и т.д.)
 function updateParticles(deltaTime) {
@@ -184,86 +229,106 @@ function updateParticles(deltaTime) {
 // Функция отрисовки частиц с учетом камеры
 function renderParticles() {
   ctx.save();
-  // Применяем преобразования камеры, чтобы частицы отрисовывались в мировых координатах
+  // Применяем преобразования камеры
   ctx.translate(camera.offsetX, camera.offsetY);
   ctx.scale(camera.scale, camera.scale);
   
   gameState.particles.forEach(p => {
     const alpha = p.life / p.maxLife;
     ctx.globalAlpha = alpha;
-    ctx.fillStyle = p.color;
-    ctx.beginPath();
-    ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
-    ctx.fill();
+    
+    if (p.type === "sparkLine") {
+      // Рисуем тонкую линию
+      ctx.strokeStyle = p.color;
+      ctx.lineWidth = p.thickness;
+      ctx.beginPath();
+      ctx.moveTo(p.x, p.y);
+      ctx.lineTo(p.x + Math.cos(p.angle) * p.length, p.y + Math.sin(p.angle) * p.length);
+      ctx.stroke();
+    } else {
+      // Для остальных частиц рисуем как обычно (например, круги)
+      ctx.fillStyle = p.color;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+      ctx.fill();
+    }
   });
+  
   ctx.globalAlpha = 1;
   ctx.restore();
 }
 
+
 function updateBullets(deltaTime) {
   for (let i = gameState.bullets.length - 1; i >= 0; i--) {
-  let bullet = gameState.bullets[i];
+    let bullet = gameState.bullets[i];
 
-  // Обновляем позицию пули
-  bullet.x += Math.cos(bullet.angle) * bullet.speed * deltaTime;
-  bullet.y += Math.sin(bullet.angle) * bullet.speed * deltaTime;
+    // Обновляем позицию пули
+    bullet.x += Math.cos(bullet.angle) * bullet.speed * deltaTime;
+    bullet.y += Math.sin(bullet.angle) * bullet.speed * deltaTime;
 
-  // Проверяем попадание по целям
-  const hitTargets = getObjectsInRange({ x: bullet.x, y: bullet.y }, 10)
-      .filter(target => target.owner !== bullet.shooter.owner && target.health > 0);
-  if (hitTargets.length > 0) {
-    hitTargets.forEach(target => {
-      target.health -= bullet.damage;
-      // Если это ракета или артиллерия, создаём эффект взрыва
-      if (bullet.isMissile || bullet.isArtillery) {
-        spawnExplosionEffect(bullet.x, bullet.y);
-      } else {
-        spawnSparkEffect(bullet.x, bullet.y);
-      }
-      if (target.health <= 0) {
-        spawnDestructionFragments(target.x, target.y, target.width, target.height, target.type);
-      }
-    });
-    gameState.bullets.splice(i, 1);
-	  applyShockwave(bullet.x, bullet.y, bullet.splashRadius, 150);
-    continue;
-	  
-  }
-
-  bullet.lifetime -= deltaTime;
-  if (bullet.lifetime <= 0) {
-    if (bullet.isMissile || bullet.isArtillery) {
-      // Создаём эффект взрыва
-      spawnExplosionEffect(bullet.x, bullet.y);
-      
-      // Наносим splash-урон целям в области взрыва
-      const targets = gameState.units.concat(gameState.buildings).filter(target =>
-        target.owner !== bullet.shooter.owner &&
-        target.health > 0 &&
-        Math.hypot(target.x - bullet.x, target.y - bullet.y) <= bullet.splashRadius
-      );
-      targets.forEach(target => {
-        target.health -= bullet.splashDamage;
+    // Проверяем попадание по целям
+    const hitTargets = getObjectsInRange({ x: bullet.x, y: bullet.y }, 10)
+        .filter(target => target.owner !== bullet.shooter.owner && target.health > 0);
+    if (hitTargets.length > 0) {
+      hitTargets.forEach(target => {
+        // Наносим прямой урон
+        target.health -= bullet.damage;
+        // Если пуля - ракета или артиллерия, создаём эффект взрыва, splash-урон и ударную волну
+        if (bullet.isMissile || bullet.isArtillery) {
+          spawnExplosionEffect(bullet.x, bullet.y);
+          // Выполняем splash-урон по всем целям в пределах splashRadius
+          const splashTargets = gameState.units.concat(gameState.buildings).filter(obj =>
+            obj.owner !== bullet.shooter.owner &&
+            obj.health > 0 &&
+            Math.hypot(obj.x - bullet.x, obj.y - bullet.y) <= bullet.splashRadius
+          );
+          splashTargets.forEach(splashTarget => {
+            splashTarget.health -= bullet.splashDamage;
+            if (splashTarget.health <= 0) {
+              spawnDestructionFragments(splashTarget.x, splashTarget.y, splashTarget.width, splashTarget.height, splashTarget.type);
+            }
+          });
+          // Применяем эффект ударной волны
+          applyShockwave(bullet.x, bullet.y, bullet.splashRadius, 150);
+        } else {
+          spawnSparkEffect(bullet.x, bullet.y);
+        }
         if (target.health <= 0) {
           spawnDestructionFragments(target.x, target.y, target.width, target.height, target.type);
         }
       });
-      
-      // Применяем эффект ударной волны: отталкивание юнитов от центра взрыва
-      // Значение force (здесь 50) можно подбирать экспериментально для достижения желаемого эффекта.
-      applyShockwave(bullet.x, bullet.y, bullet.splashRadius, 150);
+      gameState.bullets.splice(i, 1);
+      continue;
     }
-    gameState.bullets.splice(i, 1);
+
+    bullet.lifetime -= deltaTime;
+    if (bullet.lifetime <= 0) {
+      if (bullet.isMissile || bullet.isArtillery) {
+        spawnExplosionEffect(bullet.x, bullet.y);
+        const targets = gameState.units.concat(gameState.buildings).filter(target =>
+          target.owner !== bullet.shooter.owner &&
+          target.health > 0 &&
+          Math.hypot(target.x - bullet.x, target.y - bullet.y) <= bullet.splashRadius
+        );
+        targets.forEach(target => {
+          target.health -= bullet.splashDamage;
+          if (target.health <= 0) {
+            spawnDestructionFragments(target.x, target.y, target.width, target.height, target.type);
+          }
+        });
+        applyShockwave(bullet.x, bullet.y, bullet.splashRadius, 400);
+      }
+      gameState.bullets.splice(i, 1);
+    }
   }
 }
-}
+
 
 
 // ============================
 // ==== Класс Quadtree ========
 // ============================
-
-
 
 
 function addUnit(unit) {
@@ -388,7 +453,6 @@ class Quadtree {
   }
 }
 
-
 // Вспомогательные переменные для долгого тапа
 let longTapTimeout;
 let longTapFired = false;
@@ -439,8 +503,6 @@ function processLongTap(touch) {
   }
 }
 
-
-
 // Добавляем новое свойство для хранения фрагментов в состоянии игры:
 gameState.fragments = [];
 
@@ -486,10 +548,6 @@ function spawnDestructionFragments(x, y, width, height, unitType) {
     gameState.fragments.push(fragment);
   }
 }
-
-
-
-
 
 // Функция обновления фрагментов (вызывается каждый кадр, deltaTime в секундах)
 function updateFragments(deltaTime) {
@@ -545,8 +603,6 @@ function drawFragments() {
   });
   ctx.restore();
 }
-
-
 
 //ctx.restore()
 // Инициализация тумана войны с расширением persistentFogMap без полного сброса
@@ -654,7 +710,7 @@ function renderPersistentFog() {
         const worldX = c * FOG_CELL_SIZE;
         const worldY = r * FOG_CELL_SIZE;
         const screenPos = worldToScreen(worldX, worldY);
-        ctx.fillStyle = "rgba(0,0,0,1)";
+        ctx.fillStyle = "rgba(0,0,0,0.1)";
         ctx.fillRect(screenPos.x, screenPos.y, cellScreenSize, cellScreenSize);
       } else if (fogMap[r][c] < 1) {
         // Если ячейка была открыта ранее, но сейчас не видна – слегка затемняем
@@ -712,7 +768,9 @@ function resizeCanvas() {
   camera.offsetY += dy;
 	
 	// Инициализируем квадродерево с размерами мира
-  quadtree = new Quadtree({ x: 0, y: 0, width: worldWidth, height: worldHeight });
+  const margin = 0.2 * worldWidth; // или другое подходящее значение
+quadtree = new Quadtree({ x: -margin, y: -margin, width: worldWidth + 2 * margin, height: worldHeight + 2 * margin });
+
 
   console.log("Квадродерево обновлено с размерами:", worldWidth, worldHeight);
 }
@@ -840,7 +898,7 @@ function getBuilding(type, owner) {
 // Функция для генерации формы золота (самородка)
 function createGoldShape() {
   const numPoints = 8;
-  const baseRadius = 10;
+  const baseRadius = 7;
   const points = [];
   for (let i = 0; i < numPoints; i++) {
     const angle = (i / numPoints) * Math.PI * 2;
@@ -855,10 +913,6 @@ function lerpAngle(a, b, t) {
   let diff = ((b - a + Math.PI) % (2 * Math.PI)) - Math.PI;
   return a + diff * t;
 }
-
-
-
-
 // Функция динамичного перемещения с физической моделью (ускорение, инерция, орбитальное маневрирование)
 function dynamicMove(unit, target, deltaTime) {
   const dx = target.x - unit.x;
@@ -870,7 +924,7 @@ function dynamicMove(unit, target, deltaTime) {
   const desiredAngle = Math.atan2(dy, dx);
   
   // Плавное приближение к нужному углу (можно настроить скорость поворота)
-  const maxTurnSpeed = 0.5;
+  const maxTurnSpeed = 0.05;
   unit.angle = lerpAngle(unit.angle, desiredAngle, maxTurnSpeed);
   
   // Определяем направление "носа"
@@ -879,7 +933,7 @@ function dynamicMove(unit, target, deltaTime) {
   
   // Если цель – здание, желаемая дистанция – граница здания, иначе значение из unit или стандартное 100
   const desiredDistance = target instanceof Building 
-    ? (Math.max(target.width, target.height) / 2) + 10 
+    ? (Math.max(target.width, target.height) / 2) + 50 
     : (unit.desiredDistance || 100);
   
   // Определяем ошибку дистанции
@@ -942,7 +996,7 @@ function dynamicMoveAdvanced(unit, target, deltaTime) {
 
   // Желаемая дистанция: для зданий — граница, для юнитов — заданное значение или 100
   const desiredDistance = target instanceof Building 
-    ? (Math.max(target.width, target.height) / 2) + 10 
+    ? (Math.max(target.width, target.height) / 2) + 50 
     : (unit.desiredDistance || 100);
 
   const distanceError = distance - desiredDistance;
@@ -956,7 +1010,7 @@ function dynamicMoveAdvanced(unit, target, deltaTime) {
   let tacticAx = 0, tacticAy = 0;
   if (unit.tactic === "orbit") {
     // Орбитальное движение: постоянное тангенциальное ускорение, направленное перпендикулярно линии к цели
-    const orbitStrength = 100; // настройте по желанию
+    const orbitStrength = 50; // настройте по желанию
     // Перпендикуляр к desiredAngle
     const perpX = -Math.sin(desiredAngle);
     const perpY = Math.cos(desiredAngle);
@@ -964,7 +1018,7 @@ function dynamicMoveAdvanced(unit, target, deltaTime) {
     tacticAy = perpY * orbitStrength;
   } else if (unit.tactic === "figure8") {
     // Атака по "восьмерке": периодическое изменение направления тангенциального ускорения
-    const figure8Strength = 100; // настройте по желанию
+    const figure8Strength = 50; // настройте по желанию
     // Частота, например, 1 циклов в секунду
     const t = performance.now() / 1000;
     const factor = Math.sin(t * 2 * Math.PI);
@@ -1042,6 +1096,7 @@ function dynamicAttackAssault(unit, target, deltaTime) {
   // Маневрируем, используя динамическое движение
   dynamicMove(unit, target, deltaTime);
 }
+
 // Функция атаки для элитного юнита
 function dynamicAttackElite(unit, target, deltaTime) {
   if (unit.health <= 0 || !target || target.health <= 0) {
@@ -1050,7 +1105,7 @@ function dynamicAttackElite(unit, target, deltaTime) {
   }
 
   const currentDistance = Math.hypot(target.x - unit.x, target.y - unit.y);
-  const preferredRange = unit.artilleryPreferredRange || unit.artilleryRange || 300;
+  const preferredRange = unit.artilleryPreferredRange || unit.artilleryRange || 500;
   const now = performance.now();
   
   // Если цель слишком близко – может потребоваться отступить, чтобы обеспечить оптимальную дистанцию для артиллерии/лазера.
@@ -1108,7 +1163,7 @@ function dynamicAttackElite(unit, target, deltaTime) {
   const laserAngle = Math.atan2(target.y - unit.y, target.x - unit.x);
   const laserLength = unit.laserRange;
   const laserDamage = 50;
-  const penetrations = 4;
+  const penetrations = 3;
   unit.laserBeam = {
     startX: unit.x,
     startY: unit.y,
@@ -1608,10 +1663,10 @@ function processCommandQueue(unit) {
 function generateResources() {
   const resourceTypes = ["gold", "silicon", "plasma"];
   resourceTypes.forEach(type => {
-    for (let i = 0; i < 100; i++) {
+    for (let i = 0; i < 80; i++) {
       const x = Math.random() * (worldWidth - 20) + 10;
       const y = Math.random() * (worldHeight - 20) + 10;
-      const max = type === "gold" ? 500 : type === "silicon" ? 500 : 500;
+      const max = type === "gold" ? 200 : type === "silicon" ? 150 : 100;
       gameState.resources.push(new Resource(type, x, y, max, max));
     }
   });
@@ -1682,7 +1737,3 @@ function hireEliteForPlayer(barracks3) {
   gameState.units.push(elite);
   moveUnit(elite, target.x, target.y, () => startFighterCycle(elite));
 }
-
-
-
-
