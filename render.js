@@ -922,6 +922,7 @@ function renderWorkerResourceToken(ctx, token) {
   ctx.fill();
 }
 
+
 function renderResourceTokens() {
   ctx.save();
   ctx.fillStyle = "gold"; // Можно менять цвет под разные ресурсы
@@ -1155,25 +1156,6 @@ function spawnParticles(x, y, color) {
     particle.maxLife = particle.life;
     gameState.particles.push(particle);
   }
-}
-
-function processResourceDepletion() {
-  gameState.resources.slice().forEach(resource => {
-    if (resource.amount <= 0 && !resource.depleted) {
-      resource.depleted = true;
-      spawnParticles(resource.x, resource.y, "orange");
-      setTimeout(() => {
-        const idx = gameState.resources.indexOf(resource);
-        if (idx !== -1) gameState.resources.splice(idx, 1);
-        setTimeout(() => {
-          const x = Math.random() * (worldWidth - 40) + 10;
-          const y = Math.random() * (worldHeight - 40) + 10;
-          const newResource = new Resource(resource.type, x, y, resource.max, resource.max);
-          gameState.resources.push(newResource);
-        }, 50000);
-      }, 500);
-    }
-  });
 }
 
 function getMarkerPosition(offset, rect) {
@@ -3350,11 +3332,11 @@ gameState.particles.forEach(p => {
   });
 renderResourceTokens(); // Включаем отрисовку токенов
   
+	renderInfluenceOverlay(); 
   ctx.restore();
 	
 	// Если нужно отобразить динамичный туман:
   renderFogOfWar();
-	
 	
 
   // Если нужно отобразить постоянный туман:

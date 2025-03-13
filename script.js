@@ -604,46 +604,694 @@ function drawFragments() {
   ctx.restore();
 }
 
-//ctx.restore()
-// Инициализация тумана войны с расширением persistentFogMap без полного сброса
+
+
+// В constants.js добавляем новые константы для расчёта влияния объектов:
+
+// Вес для зданий
+const BUILDING_INFLUENCE_WEIGHTS = {
+  beacon: 3,           // Маяк – самый высокий вклад
+  turret: 2.5,         // Турели (основные и улучшенные) – чуть ниже
+  turret2: 2.5,
+  warehouse: 1,        // Склады – базовый вес
+  repairWorkshop: 1    // Мастерские ремонта – базовый вес
+};
+
+// Вес для юнитов
+const UNIT_INFLUENCE_WEIGHTS = {
+  fighter: 0.5,        // Истребитель – небольшой вклад
+  assault: 1,          // Штурмовик – средний вклад
+  elite: 1.5           // Элита – самый высокий вклад среди юнитов
+};
+
+// Если удобно, можно объединить в один объект:
+const INFLUENCE_WEIGHTS = {
+  // Здания игрока
+  beacon: 3,
+  // Здания ИИ
+  base: 2,
+  barracks: 1.5,
+  base2: 2,
+  base3: 2.5,
+  barracks3: 1.5,
+  wall: 1,
+  turret: 2.5,
+  turret2: 2.5,
+  warehouse: 1,
+  repairWorkshop: 1,
+  // Юниты
+  fighter: 0.5,
+  assault: 1,
+  elite: 1.5
+};
+
+
+// Эти значения можно корректировать по результатам тестирования и балансировки.
+
+
+
+
+
+let fogMap = [];               // двумерный массив для хранения состояния видимости (0 – туман, 1 – видимость)
+let persistentFogMap = [];
+let influenceGrid = [];
+
+
+
+
+
+// Предполагаем, что у нас уже определены:
+// - influenceGrid – сетка, созданная на шаге 1.
+// - quadtree – глобальное квадродерево, обновляемое в игровом цикле.
+// - FOG_CELL_SIZE и константы из constants.js.
+// - Функция getInfluenceWeight(object) из шага 2, которая возвращает вес для здания или юнита.
+// Новый метод обновления зоны влияния на основе перераспределения вклада от объектов.
+// Вместо перебора по каждой ячейке мы пробегаем по объектам (здания и юниты) и "распространяем" их вклад по ячейкам,
+// которые попадают в их радиус влияния.
+// Глобальная переменная для отслеживания количества зданий при последнем обновлении кэша
+let cachedBuildingsCount = 0;
+
+function updateInfluenceGridByObjects() {
+  const cols = Math.ceil(worldWidth / FOG_CELL_SIZE);
+  const rows = Math.ceil(worldHeight / FOG_CELL_SIZE);
+  
+  // Очищаем всю сетку влияния
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      influenceGrid[r][c].influence = 0;
+    }
+  }
+  
+  // Если количество зданий изменилось (новые здания или удаление),
+  // сбрасываем кэш для всех зданий, чтобы влияние пересчиталось заново.
+  if (gameState.buildings.length !== cachedBuildingsCount) {
+    gameState.buildings.forEach(building => {
+      building.dirty = true;
+      building.lastInfluenceCache = null;
+    });
+    cachedBuildingsCount = gameState.buildings.length;
+  }
+  
+  // Обработка зданий с кэшированием
+  gameState.buildings.forEach(obj => {
+    const weight = getInfluenceWeight(obj);
+    const sign = (obj.owner === "player") ? 1 : (obj.owner === "ai" ? -1 : 0);
+    const radius = influenceQueryRadius;
+    
+    // Вычисляем диапазон ячеек, в которые попадает влияние здания
+    const startCol = Math.max(0, Math.floor((obj.x - radius) / FOG_CELL_SIZE));
+    const endCol = Math.min(cols - 1, Math.floor((obj.x + radius) / FOG_CELL_SIZE));
+    const startRow = Math.max(0, Math.floor((obj.y - radius) / FOG_CELL_SIZE));
+    const endRow = Math.min(rows - 1, Math.floor((obj.y + radius) / FOG_CELL_SIZE));
+    
+    const gridWidth = endCol - startCol + 1;
+    const gridHeight = endRow - startRow + 1;
+    
+    // Если здание не изменялось (dirty === false) и у него есть кэш нужного размера, используем его
+    if (!obj.dirty && obj.lastInfluenceCache &&
+        obj.lastInfluenceCache.length === gridHeight &&
+        obj.lastInfluenceCache[0].length === gridWidth) {
+      for (let r = 0; r < gridHeight; r++) {
+        for (let c = 0; c < gridWidth; c++) {
+          influenceGrid[startRow + r][startCol + c].influence += obj.lastInfluenceCache[r][c];
+        }
+      }
+    } else {
+      // Пересчитываем вклад для каждой затронутой ячейки и сохраняем в кэш
+      let footprint = [];
+      for (let r = startRow; r <= endRow; r++) {
+        let rowArr = [];
+        const cellCenterY = r * FOG_CELL_SIZE + FOG_CELL_SIZE / 2;
+        for (let c = startCol; c <= endCol; c++) {
+          const cellCenterX = c * FOG_CELL_SIZE + FOG_CELL_SIZE / 2;
+          const dx = obj.x - cellCenterX;
+          const dy = obj.y - cellCenterY;
+          const distance = Math.hypot(dx, dy);
+          let contribution = 0;
+          if (distance <= radius) {
+            const decay = Math.exp(- (distance * distance) / (2 * sigma * sigma));
+            contribution = weight * decay * sign;
+          }
+          rowArr.push(contribution);
+          influenceGrid[r][c].influence += contribution;
+        }
+        footprint.push(rowArr);
+      }
+      obj.lastInfluenceCache = footprint;
+      obj.dirty = false;
+    }
+  });
+  
+  // Обработка динамичных объектов (юнитов) без кэширования
+  gameState.units.forEach(obj => {
+    const weight = getInfluenceWeight(obj);
+    const sign = (obj.owner === "player") ? 1 : (obj.owner === "ai" ? -1 : 0);
+    const radius = influenceQueryRadius;
+    
+    const startCol = Math.max(0, Math.floor((obj.x - radius) / FOG_CELL_SIZE));
+    const endCol = Math.min(cols - 1, Math.floor((obj.x + radius) / FOG_CELL_SIZE));
+    const startRow = Math.max(0, Math.floor((obj.y - radius) / FOG_CELL_SIZE));
+    const endRow = Math.min(rows - 1, Math.floor((obj.y + radius) / FOG_CELL_SIZE));
+    
+    for (let r = startRow; r <= endRow; r++) {
+      const cellCenterY = r * FOG_CELL_SIZE + FOG_CELL_SIZE / 2;
+      for (let c = startCol; c <= endCol; c++) {
+        const cellCenterX = c * FOG_CELL_SIZE + FOG_CELL_SIZE / 2;
+        const dx = obj.x - cellCenterX;
+        const dy = obj.y - cellCenterY;
+        const distance = Math.hypot(dx, dy);
+        if (distance <= radius) {
+          const decay = Math.exp(- (distance * distance) / (2 * sigma * sigma));
+          const contribution = weight * decay * sign;
+          influenceGrid[r][c].influence += contribution;
+        }
+      }
+    }
+  });
+}
+
+
+// Пример вызова новой функции в игровом цикле:
+// Можно обновлять зоны влияния не каждый кадр, а, например, раз в 5 кадров
+let frameCounter = 0;  
+// Задаём радиус запроса – можно настраивать (например, 200 единиц)  
+const influenceQueryRadius = 200;
+ // Параметр затухания (σ) – регулирует, как быстро вклад объекта уменьшается с расстоянием
+ const sigma = 200;
+
+//function updateInfluenceGrid() {
+//  // Задаём радиус запроса – можно настраивать (например, 200 единиц)
+//  const influenceQueryRadius = 200;
+//  // Параметр затухания (σ) – регулирует, как быстро вклад объекта уменьшается с расстоянием
+//  const sigma = 200;
+//  
+//  // Перебираем все ячейки influenceGrid
+//  for (let r = 0; r < influenceGrid.length; r++) {
+//    for (let c = 0; c < influenceGrid[r].length; c++) {
+//      const cell = influenceGrid[r][c];
+//      // Сброс значения влияния для текущей ячейки
+//      cell.influence = 0;
+//      
+//      // Определяем область запроса: квадрат с центром в ячейке и сторонами 2*influenceQueryRadius
+//      const queryRect = {
+//        x: cell.center.x - influenceQueryRadius,
+//        y: cell.center.y - influenceQueryRadius,
+//        width: influenceQueryRadius * 2,
+//        height: influenceQueryRadius * 2
+//      };
+//      
+//      // Получаем объекты в данной области с помощью квадродерева
+//      const objects = quadtree.query(queryRect);
+//      
+//      objects.forEach(obj => {
+//        // Проверяем, что у объекта есть координаты (для объектов, которые участвуют в расчёте)
+//        if (typeof obj.x !== 'number' || typeof obj.y !== 'number') return;
+//        
+//        // Расстояние от центра ячейки до объекта
+//        const dx = obj.x - cell.center.x;
+//        const dy = obj.y - cell.center.y;
+//        const distance = Math.hypot(dx, dy);
+//        
+//        // Рассчитываем коэффициент затухания: exp(-distance²/(2*sigma²))
+//        const decayFactor = Math.exp(- (distance * distance) / (2 * sigma * sigma));
+//        
+//        // Получаем вес объекта (зависит от типа – здания или юнита)
+//        const weight = getInfluenceWeight(obj);
+//        
+//        // Определяем знак вклада:
+//        // Если объект принадлежит игроку – положительный вклад,
+//        // если ИИ – отрицательный вклад.
+//        const sign = (obj.owner === "player") ? 1 : (obj.owner === "ai" ? -1 : 0);
+//        
+//        // Вклад объекта: вес * затухание * знак
+//        const contribution = weight * decayFactor * sign;
+//        cell.influence += contribution;
+//      });
+//    }
+//  }
+//}
+
+// Пример функции, возвращающей вес объекта – если её ещё нет, можно использовать её из шага 2.
+function getInfluenceWeight(object) {
+  if (object instanceof Building || object instanceof Unit) {
+    return INFLUENCE_WEIGHTS[object.type] || 0;
+  }
+  // Игнорируем все остальные объекты (например, туман)
+  return 0;
+}
+
+
+// Функция сглаживания сетки влияния с использованием 3x3 гауссова ядра
+function smoothInfluenceGrid() {
+  const rows = influenceGrid.length;
+  if (rows === 0) return;
+  const cols = influenceGrid[0].length;
+  if (cols === 0) return;
+
+  // Пример ядра для сглаживания 3x3
+  const kernel = [0.25, 0.5, 0.25];
+
+  // 1) Создаем временную сетку для горизонтального прохода
+  let tempGrid = [];
+  for (let r = 0; r < rows; r++) {
+    tempGrid[r] = [];
+    for (let c = 0; c < cols; c++) {
+      tempGrid[r][c] = { influence: 0 };
+    }
+  }
+
+  // 2) Горизонтальное сглаживание
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      let sum = 0;
+      for (let k = -1; k <= 1; k++) {
+        const cc = Math.min(Math.max(c + k, 0), cols - 1);
+        sum += influenceGrid[r][cc].influence * kernel[k + 1];
+      }
+      tempGrid[r][c].influence = sum;
+    }
+  }
+
+  // 3) Вертикальное сглаживание (результат пишем обратно в influenceGrid)
+  for (let c = 0; c < cols; c++) {
+    for (let r = 0; r < rows; r++) {
+      let sum = 0;
+      for (let k = -1; k <= 1; k++) {
+        const rr = Math.min(Math.max(r + k, 0), rows - 1);
+        sum += tempGrid[rr][c].influence * kernel[k + 1];
+      }
+      influenceGrid[r][c].influence = sum;
+    }
+  }
+}
+
+
+// Функция нормализации сетки влияния в диапазон от -1 до 1
+function normalizeInfluenceGrid() {
+  const rows = influenceGrid.length;
+  const cols = influenceGrid[0].length;
+  let hasPositive = false;
+  let hasNegative = false;
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const val = influenceGrid[r][c].influence;
+      if (val > 0) hasPositive = true;
+      if (val < 0) hasNegative = true;
+    }
+  }
+  // Если в мире нет отрицательных (или положительных) значений – не нормализуем
+  if (!hasNegative || !hasPositive) return;
+  
+  let minVal = Infinity, maxVal = -Infinity;
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const val = influenceGrid[r][c].influence;
+      if (val < minVal) minVal = val;
+      if (val > maxVal) maxVal = val;
+    }
+  }
+  if (maxVal === minVal) return;
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const val = influenceGrid[r][c].influence;
+      const normalized = 2 * (val - minVal) / (maxVal - minVal) - 1;
+      influenceGrid[r][c].influence = normalized;
+    }
+  }
+}
+
+
+
+// Функция отрисовки наложения зон влияния
+function renderInfluenceOverlay() {
+  const cellSize = FOG_CELL_SIZE;
+  // Устанавливаем стиль линий для плавных (закруглённых) краёв
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  // Эффект мерцания: значение меняется от 0 до 1
+  const timeFactor = (Math.sin(performance.now() / 500) + 1) / 2;
+  const baseAlpha = 0.5;
+  
+  const rows = influenceGrid.length;
+  const cols = influenceGrid[0].length;
+  
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const cell = influenceGrid[r][c];
+      if (cell.owner === "neutral") continue;
+      
+      // Определяем базовый цвет в зависимости от владельца
+      let colorBase = cell.owner === "player" ? "0,255,0" : "255,165,0";
+      
+      // Рассчитываем "соседский" фактор – чем больше соседей с таким же владельцем, тем менее заметен контур
+      let neighborCount = 0, directions = 0;
+      if (r > 0) {
+        directions++;
+        if (influenceGrid[r - 1][c].owner === cell.owner) neighborCount++;
+      }
+      if (r < rows - 1) {
+        directions++;
+        if (influenceGrid[r + 1][c].owner === cell.owner) neighborCount++;
+      }
+      if (c > 0) {
+        directions++;
+        if (influenceGrid[r][c - 1].owner === cell.owner) neighborCount++;
+      }
+      if (c < cols - 1) {
+        directions++;
+        if (influenceGrid[r][c + 1].owner === cell.owner) neighborCount++;
+      }
+      const neighborFactor = directions > 0 ? neighborCount / directions : 0;
+      const finalAlpha = baseAlpha * (0.5 + 0.5 * neighborFactor) * (0.5 + 0.5 * timeFactor);
+      
+      const strokeStyle = `rgba(${colorBase}, ${finalAlpha.toFixed(2)})`;
+      ctx.strokeStyle = strokeStyle;
+      ctx.lineWidth = 2;
+      
+      const x = c * cellSize;
+      const y = r * cellSize;
+      
+      ctx.beginPath();
+      // Верхняя граница: рисуем, если ячейка на верхнем краю или соседняя сверху другого владельца
+      if (r === 0 || influenceGrid[r - 1][c].owner !== cell.owner) {
+        ctx.moveTo(x, y);
+        ctx.lineTo(x + cellSize, y);
+      }
+      // Правая граница
+      if (c === cols - 1 || influenceGrid[r][c + 1].owner !== cell.owner) {
+        ctx.moveTo(x + cellSize, y);
+        ctx.lineTo(x + cellSize, y + cellSize);
+      }
+      // Нижняя граница
+      if (r === rows - 1 || influenceGrid[r + 1][c].owner !== cell.owner) {
+        ctx.moveTo(x + cellSize, y + cellSize);
+        ctx.lineTo(x, y + cellSize);
+      }
+      // Левая граница
+      if (c === 0 || influenceGrid[r][c - 1].owner !== cell.owner) {
+        ctx.moveTo(x, y + cellSize);
+        ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+    }
+  }
+}
+
+
+function drawRoundedRectOutline(ctx, x, y, width, height, radius, strokeStyle, lineWidth) {
+  ctx.strokeStyle = strokeStyle;
+  ctx.lineWidth = lineWidth;
+  ctx.beginPath();
+  ctx.moveTo(x + radius, y);
+  ctx.lineTo(x + width - radius, y);
+  ctx.quadraticCurveTo(x + width, y, x + width, y + radius);
+  ctx.lineTo(x + width, y + height - radius);
+  ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+  ctx.lineTo(x + radius, y + height);
+  ctx.quadraticCurveTo(x, y + height, x, y + height - radius);
+  ctx.lineTo(x, y + radius);
+  ctx.quadraticCurveTo(x, y, x + radius, y);
+  ctx.closePath();
+  ctx.stroke();
+}
+
+
+// Вспомогательная функция для рисования закруглённого прямоугольника
+function drawRoundedRect(ctx, x, y, width, height, radius, fillStyle) {
+  ctx.fillStyle = fillStyle;
+  ctx.beginPath();
+  ctx.moveTo(x + radius, y);
+  ctx.lineTo(x + width - radius, y);
+  ctx.quadraticCurveTo(x + width, y, x + width, y + radius);
+  ctx.lineTo(x + width, y + height - radius);
+  ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+  ctx.lineTo(x + radius, y + height);
+  ctx.quadraticCurveTo(x, y + height, x, y + height - radius);
+  ctx.lineTo(x, y + radius);
+  ctx.quadraticCurveTo(x, y, x + radius, y);
+  ctx.closePath();
+  ctx.fill();
+}
+
+
+// Функция обновления UI зон контроля и проверки условия победы
+function updateZoneControlUI() {
+  const cellSize = FOG_CELL_SIZE;
+  const cols = Math.ceil(worldWidth / cellSize);
+  const rows = Math.ceil(worldHeight / cellSize);
+  let playerCells = 0;
+  let aiCells = 0;
+  let neutralCells = 0;
+
+  // Первый проход: назначаем owner для каждой ячейки (код не изменён)
+  influenceGrid = [];
+  for (let r = 0; r < rows; r++) {
+    influenceGrid[r] = [];
+    for (let c = 0; c < cols; c++) {
+      const left = c * cellSize;
+      const top = r * cellSize;
+      const right = left + cellSize;
+      const bottom = top + cellSize;
+      let cellOwner = "neutral";
+
+      gameState.buildings.forEach(b => {
+        if (b.x >= left && b.x < right && b.y >= top && b.y < bottom) {
+          if (b.owner === "player") {
+            cellOwner = "player";
+          } else if (cellOwner !== "player" && b.owner === "ai") {
+            cellOwner = "ai";
+          }
+        }
+      });
+
+      influenceGrid[r][c] = {
+        owner: cellOwner,
+        center: {
+          x: left + cellSize / 2,
+          y: top + cellSize / 2
+        }
+      };
+    }
+  }
+  
+  // Второй проход: для внутренних ячеек, если ячейка нейтральна, но все четыре прямых соседа не нейтральны и принадлежат одному владельцу,
+  // то присваиваем этой ячейке тот же owner
+  for (let r = 1; r < rows - 1; r++) {
+    for (let c = 1; c < cols - 1; c++) {
+      if (influenceGrid[r][c].owner === "neutral") {
+        const topOwner = influenceGrid[r - 1][c].owner;
+        const bottomOwner = influenceGrid[r + 1][c].owner;
+        const leftOwner = influenceGrid[r][c - 1].owner;
+        const rightOwner = influenceGrid[r][c + 1].owner;
+        if (
+          topOwner !== "neutral" &&
+          topOwner === bottomOwner &&
+          topOwner === leftOwner &&
+          topOwner === rightOwner
+        ) {
+          influenceGrid[r][c].owner = topOwner;
+        }
+      }
+    }
+  }
+  
+  // Подсчитываем ячейки по владельцам
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const owner = influenceGrid[r][c].owner;
+      if (owner === "player") playerCells++;
+      else if (owner === "ai") aiCells++;
+      else neutralCells++;
+    }
+  }
+  
+  // Обновляем UI-счётчик (если требуется)
+  let zoneControlCounter = document.getElementById("zoneControlCounter");
+  if (!zoneControlCounter) {
+    zoneControlCounter = document.createElement("div");
+    zoneControlCounter.id = "zoneControlCounter";
+    zoneControlCounter.style.position = "fixed";
+    zoneControlCounter.style.top = "0px";  // Изменено с "0px" на "40px"
+    zoneControlCounter.style.left = "50%";
+    zoneControlCounter.style.width = "50%";
+    zoneControlCounter.style.padding = "5px";
+    zoneControlCounter.style.background = "#333";
+    zoneControlCounter.style.color = "#fff";
+    zoneControlCounter.style.fontSize = "14px";
+    zoneControlCounter.style.textAlign = "center";
+    zoneControlCounter.style.zIndex = "100";
+    document.body.appendChild(zoneControlCounter);
+  }
+  zoneControlCounter.innerHTML =
+    `Клеток: Игрок: ${playerCells} | ИИ: ${aiCells} | Нейтральных: ${neutralCells} (Всего: ${rows * cols})`;
+}
+
+
+
+
+
+
+function endGame(winner) {
+  // Устанавливаем флаг окончания игры, чтобы ИИ не продолжал принимать решения,
+  // но не останавливаем полностью игровой цикл, если это необходимо для анимации
+  gameState.gameEnded = true;
+  
+  // Обновляем элемент DOM для вывода сообщения
+  let endMessage = document.getElementById("gameEndMessage");
+  if (!endMessage) {
+    endMessage = document.createElement("div");
+    endMessage.id = "gameEndMessage";
+    endMessage.style.position = "fixed";
+    endMessage.style.top = "50%";
+    endMessage.style.left = "50%";
+    endMessage.style.transform = "translate(-50%, -50%)";
+    endMessage.style.background = "rgba(0, 0, 0, 0.8)";
+    endMessage.style.color = "#fff";
+    endMessage.style.padding = "20px 40px";
+    endMessage.style.fontSize = "24px";
+    endMessage.style.borderRadius = "8px";
+    endMessage.style.zIndex = "10000";
+    document.body.appendChild(endMessage);
+  }
+  
+  endMessage.innerHTML = (winner === "player")
+    ? "Победа игрока!"
+    : "Победа ИИ!";
+  
+  // Можно также добавить кнопку для перезапуска игры или другие опции.
+}
+
+
+// Функция анализа сетки зон влияния.
+function analyzeInfluenceGrid() {
+  const vulnerableZones = [];
+  const defensiveZones = [];
+  const positiveThreshold = 0.3;
+  const negativeThreshold = -0.3;
+  
+  for (let r = 0; r < influenceGrid.length; r++) {
+    for (let c = 0; c < influenceGrid[r].length; c++) {
+      const cell = influenceGrid[r][c];
+      if (cell.influence > positiveThreshold) {
+        vulnerableZones.push(cell);
+      } else if (cell.influence < negativeThreshold) {
+        defensiveZones.push(cell);
+      }
+    }
+  }
+  
+  return { vulnerableZones, defensiveZones };
+}
+
+// Функция, которая принимает стратегические решения ИИ на основе зон влияния.
+function aiUpdateZoneStrategy() {
+  const { vulnerableZones, defensiveZones } = analyzeInfluenceGrid();
+  
+  // Если обнаружены уязвимые зоны, инициируем захват.
+  if (vulnerableZones.length > 0) {
+    // Выбираем зону с максимальным положительным влиянием.
+    let targetZone = vulnerableZones.reduce((max, cell) => (cell.influence > max.influence ? cell : max), vulnerableZones[0]);
+    
+    // Пример: если есть возможность, строим турель для усиления контроля в этой зоне.
+    if (canAfford(TURRET_COST, "ai")) {
+      const built = aiPlaceBuilding("turret", targetZone.center.x, targetZone.center.y);
+      if (built) {
+        console.log(`ИИ строит турель для захвата уязвимой зоны в (${targetZone.center.x}, ${targetZone.center.y})`);
+      }
+    }
+  }
+  
+  // Если обнаружены зоны, контролируемые ИИ, усиливаем оборону.
+  if (defensiveZones.length > 0) {
+    let safeZone = defensiveZones.reduce((min, cell) => (cell.influence < min.influence ? cell : min), defensiveZones[0]);
+    
+    // Используем уже реализованную функцию для поиска ближайшей базы ИИ.
+    const nearestBase = findNearestAIBuilding(safeZone.center.x, safeZone.center.y);
+    if (nearestBase && canAfford(FIGHTER_COST, "ai")) {
+      aiHireMilitaryUnits("fighter", nearestBase);
+      console.log(`ИИ усиливает защиту в зоне (${safeZone.center.x}, ${safeZone.center.y})`);
+    }
+  }
+}
+
+function findNearestAIBuilding(x, y) {
+  let nearest = null;
+  let minDist = Infinity;
+  gameState.buildings.forEach(building => {
+    if (building.owner === "ai") {
+      const d = Math.hypot(building.x - x, building.y - y);
+      if (d < minDist) {
+        minDist = d;
+        nearest = building;
+      }
+    }
+  });
+  return nearest;
+}
+
+
+
+
+
+// Новая функция инициализации сетки зон влияния, аналогичная initFogOfWar() *****
+function initInfluenceGrid() {
+  const cols = Math.ceil(worldWidth / FOG_CELL_SIZE);
+  const rows = Math.ceil(worldHeight / FOG_CELL_SIZE);
+  influenceGrid = [];
+  for (let r = 0; r < rows; r++) {
+    influenceGrid[r] = [];
+    for (let c = 0; c < cols; c++) {
+      influenceGrid[r][c] = {
+        influence: 0,  // Начальное нейтральное значение влияния
+        owner: null,   // Будет определять, кто доминирует: 'player' или 'ai'
+        center: {
+          x: c * FOG_CELL_SIZE + FOG_CELL_SIZE / 2,
+          y: r * FOG_CELL_SIZE + FOG_CELL_SIZE / 2
+        }
+      };
+    }
+  }
+}
+
+
+
+// Инициализация тумана войны с расширением persistentFogMap без полного сброса ****
 function initFogOfWar() {
   const cols = Math.ceil(worldWidth / FOG_CELL_SIZE);
   const rows = Math.ceil(worldHeight / FOG_CELL_SIZE);
-
-  // Пересоздаём fogMap полностью
+  
+  // Инициализируем или пересоздаём fogMap полностью
   fogMap = [];
   for (let r = 0; r < rows; r++) {
     fogMap[r] = new Array(cols).fill(0);
   }
   
-  // Если persistentFogMap ещё не создан, создаём его полностью
+  // Если persistentFogMap ещё не создана, создаём её
   if (!persistentFogMap || persistentFogMap.length === 0) {
     persistentFogMap = [];
     for (let r = 0; r < rows; r++) {
       persistentFogMap[r] = new Array(cols).fill(0);
     }
   } else {
-    // Если уже существует, расширяем (или обрезаем) его до новых размеров, сохраняя уже открытые ячейки
-    const currentRows = persistentFogMap.length;
-    const currentCols = persistentFogMap[0].length;
-    // Расширяем или обрезаем строки
+    // Если persistentFogMap уже существует, расширяем или обрезаем её, сохраняя данные
+    // Расширение/обрезка строк:
     for (let r = 0; r < rows; r++) {
-      if (r < currentRows) {
-        // Расширяем текущую строку, если нужно
+      if (r < persistentFogMap.length) {
+        // Обновляем каждую строку: если длина меньше, добавляем новые ячейки, если больше – обрезаем
         while (persistentFogMap[r].length < cols) {
           persistentFogMap[r].push(0);
         }
-        // Если строка стала длиннее, обрезаем её
         persistentFogMap[r] = persistentFogMap[r].slice(0, cols);
       } else {
-        // Добавляем новые строки
+        // Если строк меньше, чем нужно – добавляем новые строки
         persistentFogMap[r] = new Array(cols).fill(0);
       }
     }
-    // Если новых строк меньше, чем было раньше, обрезаем массив строк
+    // Если у persistentFogMap больше строк, чем сейчас требуется, обрезаем массив строк
     persistentFogMap = persistentFogMap.slice(0, rows);
   }
 }
+
 
 // Функция обновления тумана войны (не изменена логика, но добавлена проверка)
 function updateFogOfWar() {
@@ -710,7 +1358,7 @@ function renderPersistentFog() {
         const worldX = c * FOG_CELL_SIZE;
         const worldY = r * FOG_CELL_SIZE;
         const screenPos = worldToScreen(worldX, worldY);
-        ctx.fillStyle = "rgba(0,0,0,1";
+        ctx.fillStyle = "rgba(0,0,0,0.1)";
         ctx.fillRect(screenPos.x, screenPos.y, cellScreenSize, cellScreenSize);
       } else if (fogMap[r][c] < 1) {
         // Если ячейка была открыта ранее, но сейчас не видна – слегка затемняем
@@ -745,38 +1393,45 @@ function renderDynamicFog() {
   ctx.restore();
 }
 
-// Функция изменения размеров canvas и виртуального мира с сохранением текущего вида
+// Функция изменения размеров canvas и виртуального мира с сохранением текущего вида // Пример модификации функции resizeCanvas() для пересчёта размеров мира и вызова новых инициализаций
+// Пример модификации функции resizeCanvas() для пересчёта размеров мира и вызова новых инициализаций
 function resizeCanvas() {
   const oldWidth = canvas.width;
   const oldHeight = canvas.height;
   
   canvas.width = window.innerWidth;
   canvas.height = window.innerHeight;
-  // Размеры виртуального мира – в 3 раза больше видимой области
+  
+  // Размеры виртуального мира – например, в 2 раза больше видимой области
   worldWidth = canvas.width * 2;
   worldHeight = canvas.height * 2;
-  console.log("worldWidth:", worldWidth, "worldHeight:", worldHeight);
   
+  // Пересоздаём звездное поле
   starField.init();
-  // Вместо полного сброса persistentFogMap, расширяем его через initFogOfWar
+  
+  // Инициализация тумана войны
   initFogOfWar();
   
-  // Корректируем смещение камеры, чтобы сохранить текущий вид относительно центра
+  // Инициализация сетки зон влияния, используя те же размеры, что и для тумана
+  initInfluenceGrid();
+  
+  // Корректировка смещения камеры, чтобы сохранить текущий вид
   const dx = canvas.width / 2 - oldWidth / 2;
   const dy = canvas.height / 2 - oldHeight / 2;
   camera.offsetX += dx;
   camera.offsetY += dy;
-	
-	// Инициализируем квадродерево с размерами мира
-  const margin = 0.2 * worldWidth; // или другое подходящее значение
-quadtree = new Quadtree({ x: -margin, y: -margin, width: worldWidth + 2 * margin, height: worldHeight + 2 * margin });
-
-
-  console.log("Квадродерево обновлено с размерами:", worldWidth, worldHeight);
+  
+  // Инициализация квадродерева с обновлёнными размерами мира
+  const margin = 0.2 * worldWidth;
+  quadtree = new Quadtree({ x: -margin, y: -margin, width: worldWidth + 2 * margin, height: worldHeight + 2 * margin });
 }
 window.addEventListener("resize", resizeCanvas);
 
 resizeCanvas();
+
+
+
+
 /* === Спавн баз игрока и ИИ === */
 function getRandomBasePosition(margin, minDistance, existingBase = null) {
   let pos;

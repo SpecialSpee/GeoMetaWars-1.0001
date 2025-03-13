@@ -137,6 +137,182 @@ canvas.addEventListener("touchcancel", e => {
   isDragging = false;
 }, { passive: false });
 
+
+// Глобальный массив для суперновых эффектов
+let supernovaEffects = [];
+
+
+
+function processResourceDepletion() {
+  gameState.resources.slice().forEach(resource => {
+    //console.log("Ресурс:", resource.type, "amount:", resource.amount, "depleted:", resource.depleted);
+    if (resource.amount <= 10 && !resource.depleted) {
+      console.log("Запускается суперновая для ресурса:", resource);
+      resource.depleted = true;
+      spawnSupernovaEffect(resource);
+      setTimeout(() => {
+        const idx = gameState.resources.indexOf(resource);
+        if (idx !== -1) gameState.resources.splice(idx, 1);
+        setTimeout(() => {
+          const x = Math.random() * (worldWidth - 40) + 10;
+          const y = Math.random() * (worldHeight - 40) + 10;
+          const newResource = new Resource(resource.type, x, y, resource.max, resource.max);
+          gameState.resources.push(newResource);
+        }, 50000);
+      }, 500);
+    }
+  });
+}
+
+
+function spawnSupernovaFragments(x, y, explosionRadius, resourceColor) {
+  const numFragments = 50; // Количество фрагментов для эффекта суперновой
+  for (let i = 0; i < numFragments; i++) {
+    // Форма фрагмента: случайное число вершин от 3 до 5
+    const numVertices = 3 + Math.floor(Math.random() * 3);
+    const points = [];
+    // Базовый радиус фрагмента относительно explosionRadius (маленький размер)
+    const baseFragmentRadius = explosionRadius * (0.05 + Math.random() * 0.06);
+    for (let j = 0; j < numVertices; j++) {
+      const baseAngle = (j / numVertices) * 2 * Math.PI;
+      // Добавляем небольшое случайное отклонение угла
+      const angleOffset = (Math.random() - 0.5) * (Math.PI / 8);
+      const angle = baseAngle + angleOffset;
+      // Радиус фрагмента немного варьируется
+      const radius = baseFragmentRadius * (0.8 + Math.random() * 0.4);
+      points.push({
+        x: radius * Math.cos(angle),
+        y: radius * Math.sin(angle)
+      });
+    }
+    // Фрагменты будут иметь небольшую скорость (относительно explosionRadius)
+    const fragment = {
+      x: x,
+      y: y,
+      vx: (Math.random() - 0.5) * explosionRadius * 2,
+      vy: (Math.random() - 0.5) * explosionRadius * 2,
+      angle: Math.random() * Math.PI * 2,
+      angularVelocity: (Math.random() - 0.5) * 4,
+      points: points,
+      // Время жизни фрагмента от 1.5 до 3 секунд
+      life: 2 + Math.random() * 2,
+      maxLife: 3 + Math.random() * 3,
+      // Цвет фрагмента берём из ресурса
+      color: resourceColor
+    };
+    gameState.fragments.push(fragment);
+  }
+}
+
+
+function drawFragments() {
+  ctx.save();
+  // Применяем смещение и зум камеры
+  ctx.translate(camera.offsetX, camera.offsetY);
+  ctx.scale(camera.scale, camera.scale);
+  gameState.fragments.forEach(frag => {
+    ctx.save();
+    ctx.translate(frag.x, frag.y);
+    if (frag.angle) {
+      ctx.rotate(frag.angle);
+    }
+    const alpha = Math.max(0, frag.life / frag.maxLife);
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = frag.color;
+    if (frag.drawAsCircle) {
+      // Отрисовка фрагмента как круг с учетом его радиуса
+      ctx.beginPath();
+      ctx.arc(0, 0, frag.radius, 0, Math.PI * 2);
+      ctx.fill();
+    } else if (frag.points && frag.points.length > 0) {
+      ctx.beginPath();
+      ctx.moveTo(frag.points[0].x, frag.points[0].y);
+      for (let j = 1; j < frag.points.length; j++) {
+        ctx.lineTo(frag.points[j].x, frag.points[j].y);
+      }
+      ctx.closePath();
+      ctx.fill();
+    } else {
+      // Значение по умолчанию, если нет настроек – масштабируется
+      ctx.fillRect(-5, -5, 10, 10);
+    }
+    ctx.restore();
+  });
+  ctx.restore();
+}
+
+
+
+
+function spawnSupernovaEffect(resource) {
+  console.log("Запущен эффект суперновой для ресурса:", resource);
+  const effect = {
+    x: resource.x,
+    y: resource.y,
+    startTime: performance.now(),
+    duration: 3000,         // Общая длительность эффекта (например, 3 сек)
+    pulsateDuration: 2000,  // Фаза пульсации (2 сек)
+    exploded: false,        // Флаг, что взрыв уже произошёл
+    currentScale: 0.5,        // Текущий масштаб эффекта
+    baseRadius: 50,         // Базовый радиус эффекта
+    // Цвет ресурса передаётся, если он задан в объекте ресурса,
+    // иначе используется значение по умолчанию
+    resourceColor: resource.color || "#FFD700"
+  };
+  supernovaEffects.push(effect);
+}
+
+function updateSupernovaEffects(deltaTime) {
+  const now = performance.now();
+  for (let i = supernovaEffects.length - 1; i >= 0; i--) {
+    const effect = supernovaEffects[i];
+    const elapsed = now - effect.startTime;
+    if (elapsed < effect.pulsateDuration) {
+      // Фаза пульсации: эффект сжимается с небольшими осцилляциями
+      const progress = elapsed / effect.pulsateDuration;
+      const baseScale = 1 - 0.9 * progress; // от 1 до 0.1
+      const pulsation = 0.1 * Math.sin(elapsed * 0.02 * Math.PI * 2);
+      effect.currentScale = baseScale + pulsation;
+    } else {
+      if (!effect.exploded) {
+        // При переходе в фазу взрыва генерируем осколки суперновой с нужными параметрами
+        spawnSupernovaFragments(effect.x, effect.y, effect.baseRadius, effect.resourceColor);
+        effect.exploded = true;
+      }
+      // Фаза затухания: эффект постепенно исчезает
+      const fadeProgress = (elapsed - effect.pulsateDuration) / (effect.duration - effect.pulsateDuration);
+      effect.currentScale = Math.max(0, effect.currentScale * (1 - fadeProgress));
+    }
+    if (elapsed >= effect.duration) {
+      supernovaEffects.splice(i, 1);
+    }
+  }
+}
+
+function renderSupernovaEffects() {
+  supernovaEffects.forEach(effect => {
+    ctx.save();
+    const screenPos = worldToScreen(effect.x, effect.y);
+    ctx.translate(screenPos.x, screenPos.y);
+    const screenRadius = effect.baseRadius * effect.currentScale * camera.scale;
+    const gradient = ctx.createRadialGradient(0, 0, 0, 0, 0, screenRadius);
+    gradient.addColorStop(0, "rgba(255,255,255,1)");
+    gradient.addColorStop(0.5, effect.resourceColor);
+    gradient.addColorStop(1, "rgba(0,0,0,0)");
+    ctx.fillStyle = gradient;
+    ctx.beginPath();
+    ctx.arc(0, 0, screenRadius, 0, 2 * Math.PI);
+    ctx.fill();
+    ctx.restore();
+  });
+}
+
+
+
+
+
+
+
 // ==============================================
 // Обработчики для установки стены (build zone) – МЫШЬ
 function wallDragStartHandler(e) {
@@ -189,7 +365,6 @@ function wallTouchMoveHandler(e) {
   const dy = touch.clientY - wallDragStart.y;
   console.log("Перетаскивание стены (touch): dx =", dx, "dy =", dy);
 }
-
 function wallTouchEndHandler(e) {
   e.preventDefault();
   e.stopPropagation();
@@ -500,6 +675,8 @@ function updateGameState(deltaTime) {
   updateFragments(deltaTime);
   updateFogOfWar();
 	
+	  processResourceDepletion(); 
+	
 	// Обновляем токены ресурсов, собираем их из рабочих
   // Сначала очищаем массив токенов
   gameState.resourceTokens = [];
@@ -511,7 +688,7 @@ function updateGameState(deltaTime) {
   });
 	
 }
-
+//const INFLUENCE_UPDATE_INTERVAL = 5; // обновляем зону влияния раз в 5 кадров
 function gameLoop(time) {
   const deltaTime = (time - lastTime) / 1000;
   lastTime = time;
@@ -550,12 +727,36 @@ function gameLoop(time) {
   updateGameState(deltaTime);
   // Отрисовка токенов ресурсов
   renderResourceTokens();
+	
+	 // Обновление сетки зон влияния:
+  updateZoneControlUI();
+  smoothInfluenceGrid();
+  normalizeInfluenceGrid();
+	
+  
   // Отрисовка игровых объектов
   renderGame();
   
   // Дополнительная отрисовка фрагментов и частиц
   drawFragments();
   renderParticles();
+	
+	 // Обновление UI: вывод счета зон контроля
+  updateZoneControlUI();
+  
+  // Обновление логики ИИ с учётом зон влияния:
+  aiUpdateZoneStrategy();
+	
+	  // Отдельно обновляем и отрисовываем эффекты суперновой
+  updateSupernovaEffects(deltaTime);
+  renderSupernovaEffects();
+	
+	frameCounter++;
+  if (frameCounter % 30 === 0) {
+    updateInfluenceGridByObjects();
+  }
+  
+
   
   gameLoopId = requestAnimationFrame(gameLoop);
 }

@@ -8,7 +8,7 @@ const gameState = {
   bullets: [],
   particles: [],
   resourceTokens: [],	
-  playerResources: { gold: 200, silicon: 300, plasma: 150 },
+  playerResources: { gold: 20000, silicon: 30000, plasma: 15000 },
   aiResources: { gold: 200, silicon: 300, plasma: 150 },
 	// Новые массивы для оптимизации
   attackers: [],    // для всех боевых юнитов (fighter, assault, elite)
@@ -54,8 +54,7 @@ const WALL_COST = { gold: 8, silicon: 4, plasma: 2 };
 // === Константы и глобальные переменные для тумана войны ===
 const FOG_CELL_SIZE = 45;      // размер ячейки тумана (в мировых единицах)
 const VISION_RADIUS = 250;     // радиус видимости юнита игрока (в мировых единицах)
-let fogMap = [];               // двумерный массив для хранения состояния видимости (0 – туман, 1 – видимость)
-let persistentFogMap = [];
+
 
 
 const WORKER_SPEED = 50;

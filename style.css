@@ -31,17 +31,24 @@ html, body {
   position: fixed;
   top: 0;
   left: 0;
-  width: 100%;
+  width: 50%;
   background: #222;
   color: #fff;
-  padding: 5px;
+  padding: 5px 10px;
   display: flex;
-  justify-content: center;
+  justify-content: center; /* блоки располагаются по сторонам */
   align-items: center;
   font-size: 14px;
   z-index: 10;
-  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.5);
 }
+
+#playerResources,
+#zoneControlCounter {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 
 #buildMenu {
   position: fixed;
