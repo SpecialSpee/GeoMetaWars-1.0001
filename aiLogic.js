@@ -12,12 +12,45 @@
 // а также константы: GRID_SIZE, RESOURCE_CLUSTER_RADIUS, DEFENSE_RADIUS, DESIRED_DEFENDERS_PER_BUILDING,
 // MIN_GARRISON_COUNT. Константы GREY_ZONE_RADIUS и ENEMY_ACTIVITY_THRESHOLD определяются в другом файле.
 
+let soldBuildings = [];
+function hasBuilding(buildingType, owner) {
+  const found = gameState.buildings.some(b => b.owner === owner && b.type === buildingType);
+  //console.log(`hasBuilding(${buildingType}, ${owner}) =>`, found);
+  return found;
+}
+
+
+let aiSaleQueue = [];
+let aiSaleCooldown = false; // Флаг задержки между продажами
+
+// Функция для добавления здания в очередь продаж
+function queueSale(building) {
+  if (!aiSaleQueue.includes(building)) {
+    aiSaleQueue.push(building);
+    //console.log("Здание добавлено в очередь продажи:", building.type);
+  }
+}
+
+// Функция обработки очереди продаж (вызывается, например, через setInterval)
+function processAISaleQueue() {
+  if (aiSaleQueue.length > 0 && !aiSaleCooldown) {
+    const building = aiSaleQueue.shift();
+   //console.log("Продажа здания из очереди:", building.type);
+    triggerSale(building);
+    aiSaleCooldown = true;
+    // Устанавливаем задержку (например, 2000 мс)
+    setTimeout(() => { aiSaleCooldown = false; }, 6000);
+  }
+}
+
+// Запускаем обработку очереди продаж раз в 500 мс
+setInterval(processAISaleQueue, 10000);
 
 
 // Константы для тактических расстояний (эти значения можно корректировать по результатам тестирования)
-const FLANK_OFFSET = 2700;       // расстояние до позиции сбоку для фланговой атаки
-const DIVERSION_OFFSET = 1600;   // смещение для отвлекающего манёвра
-const SAFE_DISTANCE = 500;      // дистанция для элитных юнитов (безопасное отступление)
+const FLANK_OFFSET = 4700;       // расстояние до позиции сбоку для фланговой атаки
+const DIVERSION_OFFSET = 3600;   // смещение для отвлекающего манёвра
+const SAFE_DISTANCE = 2000;      // дистанция для элитных юнитов (безопасное отступление)
 const BATTLE_ZONE_RADIUS = 150; // радиус, равный диапазону поражения оружия
 
 const PHASES = {
@@ -38,6 +71,8 @@ let builtClusters = [];  // Массив для сохранения коорд�
 let cachedQueryResult = null;
 let lastQueryTime = 0;
 
+
+
 const UNIT_LIMITS = {
   fighter: 20,
   assault: 15,
@@ -50,10 +85,10 @@ const MIN_GOLD_FOR_EXPANSION = 100;
 const MIN_SILICON_FOR_EXPANSION = 100;
 const MIN_PLASMA_FOR_EXPANSION = 100;
 
-const GREY_ZONE_RADIUS = 200;
+const GREY_ZONE_RADIUS = 300;
 const ENEMY_ACTIVITY_THRESHOLD = 0;
 
-const DESIRED_WAREHOUSE_COUNT = 10;
+const DESIRED_WAREHOUSE_COUNT = 15;
 const DESIRED_WORKER_COUNT = 5;
 const DESIRED_REPAIR_WORKSHOP_COUNT = 3;
 const DESIRED_REPAIRMAN_COUNT = 10;
@@ -67,7 +102,7 @@ const MIN_GARRISON_COUNT = 10;  // Минимальное число юнито�
 const MAX_GARRISON_COUNT = 50; // Если юнитов больше – часть остаётся в обороне
 const CLUSTER_RADIUS = 100;    // Радиус для группировки построек в кластер
 
-const DESIRED_DEFENDERS_PER_BUILDING = 4;
+const DESIRED_DEFENDERS_PER_BUILDING = 2;
 const DEFENSE_RADIUS = 200; // Радиус, в пределах которого считается, что здание защищено
 
 const GARRISON_COUNT_PER_CLUSTER = MIN_GARRISON_COUNT; // число юнитов, которые должны оставаться в кластере для защиты
@@ -80,7 +115,7 @@ function canHireUnit(type) {
 }
 // Например, обновлённая функция getCachedObjectsInRange:
 function getCachedObjectsInRange(range) {
-  const cacheInterval = 100; // интервал кэширования в мс
+  const cacheInterval = 5000; // интервал кэширования в мс
   const now = performance.now();
   if (now - lastQueryTime > cacheInterval) {
     if (typeof quadtree !== "undefined" && quadtree !== null) {
@@ -117,49 +152,50 @@ function canBuild(buildingType) {
 //////////////////////////////////////////////////////////////
 
 function formMixedAttackGroupDynamic() {
-  // Идеальный состав для базового уровня (минимум)
+  // Базовый состав группы (минимум)
   const baseMix = { fighter: 3, assault: 2, elite: 1 };
   const freeReserve = getFreeReserveUnits();
   const totalFree = freeReserve.length;
 
-  // Определяем коэффициент масштабирования: если свободных много – увеличиваем состав пропорционально,
-  // но не меньше базового и не больше общего числа свободных юнитов
+  // Масштабируем состав в зависимости от количества свободных юнитов
   const scale = totalFree / 6; // 6 – сумма базового состава
-  // Например, если в резерве 12 юнитов, scale=2, значит идеальный состав удваивается
-
-  // Для каждого типа вычисляем новое количество, округляя до целого числа, не менее базового
   const desiredMix = {
     fighter: Math.max(baseMix.fighter, Math.floor(baseMix.fighter * scale)),
     assault: Math.max(baseMix.assault, Math.floor(baseMix.assault * scale)),
     elite: Math.max(baseMix.elite, Math.floor(baseMix.elite * scale))
   };
 
-  // Собираем группу согласно желаемой пропорции
-  const group = [];
-  // Группируем свободных юнитов по типу
+  // Группируем свободные юниты по типу
   const grouped = freeReserve.reduce((acc, unit) => {
     acc[unit.type] = acc[unit.type] || [];
     acc[unit.type].push(unit);
     return acc;
   }, {});
 
+  // Собираем группу, выбирая ближайших юнитов к центру базы ИИ (или к выбранной точке атаки)
+  const group = [];
   Object.keys(desiredMix).forEach(type => {
-    const countNeeded = desiredMix[type];
     const available = grouped[type] || [];
-    // Берём нужное число, но не больше, чем имеется
-    const countToTake = Math.min(countNeeded, available.length);
+    // Здесь можно отсортировать available по расстоянию до цели
+    available.sort((a, b) => {
+      const distA = Math.hypot(a.x - aiBase.x, a.y - aiBase.y);
+      const distB = Math.hypot(b.x - aiBase.x, b.y - aiBase.y);
+      return distA - distB;
+    });
+    const countToTake = Math.min(desiredMix[type], available.length);
     group.push(...available.slice(0, countToTake));
   });
 
-  // Если группа всё ещё меньше 5, дополняем случайными юнитами из резерва
+  // Если группа меньше минимального размера, дополняем случайными юнитами
   const MIN_ATTACK_UNITS = 5;
   if (group.length < MIN_ATTACK_UNITS) {
     const additional = freeReserve.filter(u => !group.includes(u));
     group.push(...additional.slice(0, MIN_ATTACK_UNITS - group.length));
   }
-
+  
   return group;
 }
+
 
 //////////////////////////////////////////////////////////////
 // Функции очереди построек
@@ -201,7 +237,7 @@ function onDamage(entity, damage) {
     if (typeof handleEntityDestruction === "function") {
       handleEntityDestruction(entity);
     } else {
-      console.log("Объект уничтожен:", entity);
+      //console.log("Объект уничтожен:", entity);
     }
   }
 }
@@ -231,11 +267,11 @@ function fortifyBaseBuildings(owner) {
       const wallY = base.y + Math.sin(chosenAngle) * (base.height / 2 + 20);
       if (owner === "ai") {
         if (aiPlaceBuilding("wall", wallX, wallY)) {
-          console.log(`ИИ построил стену для защиты базы ${base.type} в (${Math.round(wallX)}, ${Math.round(wallY)})`);
+          //console.log(`ИИ построил стену для защиты базы ${base.type} в (${Math.round(wallX)}, ${Math.round(wallY)})`);
         }
       } else {
         if (placeBuilding(wallX, wallY, "wall", owner)) {
-          console.log(`Игрок построил стену для защиты базы ${base.type} в (${Math.round(wallX)}, ${Math.round(wallY)})`);
+          //console.log(`Игрок построил стену для защиты базы ${base.type} в (${Math.round(wallX)}, ${Math.round(wallY)})`);
         }
       }
     }
@@ -308,7 +344,7 @@ function mobilizeDefendersAround(object) {
       u.commandQueue.length === 0
     );
     if (freeUnits.length > 0) {
-      console.log(`Мобилизация обороны вокруг (${Math.round(pos.x)}, ${Math.round(pos.y)}), врагов: ${enemyUnits.length}`);
+      //console.log(`Мобилизация обороны вокруг (${Math.round(pos.x)}, ${Math.round(pos.y)}), врагов: ${enemyUnits.length}`);
       freeUnits.forEach(unit => {
         unit.commandQueue = [];
         const nearestEnemy = enemyUnits.reduce((prev, curr) =>
@@ -325,20 +361,37 @@ function mobilizeDefendersAround(object) {
 
 // Обновлённая функция isGreyZone – теперь гарантируем, что filter вызывается на массиве:
 function isGreyZone(target) {
+  const dangerThreshold = 400; // пороговое расстояние для опасной зоны
+  
+  // Проверка неудачных попыток строительства
+  if (failedClusters.some(pt => Math.hypot(pt.x - target.x, pt.y - target.y) < dangerThreshold)) {
+    //console.log("Целевая точка в зоне неудачного строительства");
+    return true;
+  }
+  
+  // Проверка проданных зданий
+  if (soldBuildings.some(pt => Math.hypot(pt.x - target.x, pt.y - target.y) < dangerThreshold)) {
+    //console.log("Целевая точка в зоне продажи здания");
+    return true;
+  }
+  
+  // Стандартная логика – проверка активности врагов
   const queryRange = {
     x: target.x - GREY_ZONE_RADIUS,
     y: target.y - GREY_ZONE_RADIUS,
     width: GREY_ZONE_RADIUS * 2,
     height: GREY_ZONE_RADIUS * 2
   };
-  // Если getCachedObjectsInRange возвращает null, используем [] по умолчанию
   const objectsInRange = getCachedObjectsInRange(queryRange) || [];
   const enemyCount = objectsInRange.filter(obj =>
     obj.owner === "player" &&
     Math.hypot(obj.x - target.x, obj.y - target.y) < GREY_ZONE_RADIUS
   ).length;
+  
   return enemyCount > ENEMY_ACTIVITY_THRESHOLD;
 }
+
+
 
 // Экономическая экспансия и построение кластеров ресурсов
 function buildClusterAt(target) {
@@ -347,7 +400,7 @@ function buildClusterAt(target) {
     return;
   }
   // Проверяем наличие хотя бы одного инфраструктурного объекта в радиусе 50 единиц
-  const infraTypes = ["beacon", "warehouse", "repairWorkshop", "turret"];
+  const infraTypes = ["warehouse", "beacon", "repairWorkshop", "turret", "turret2"];
   if (gameState.buildings.some(b =>
     b.owner === "ai" && infraTypes.includes(b.type) &&
     Math.hypot(b.x - target.x, b.y - target.y) < 50
@@ -355,15 +408,15 @@ function buildClusterAt(target) {
     return;
   }
   // Если ресурсов для маяка хватает, начинаем кластер с маяка
-  if (!canAfford(BEACON_COST, "ai")) { return; }
-  scheduleAIBuilding("beacon", target.x, target.y, 0);
+  if (!canAfford(WAREHOUSE_COST, "ai")) { return; }
+  scheduleAIBuilding("warehouse", target.x, target.y, 0);
   
   // Затем через небольшие интервалы строим остальные объекты кластера
-  setTimeout(() => { if (canAfford(WAREHOUSE_COST, "ai")) scheduleAIBuilding("warehouse", target.x - 40, target.y, 0); }, 500);
+  setTimeout(() => { if (canAfford(BEACON_COST, "ai")) scheduleAIBuilding("beacon", target.x - 40, target.y, 0); }, 500);
   setTimeout(() => { if (canAfford(WAREHOUSE_COST, "ai")) scheduleAIBuilding("warehouse", target.x + 40, target.y, 0); }, 1000);
   setTimeout(() => { if (canAfford(REPAIR_WORKSHOP_COST, "ai")) scheduleAIBuilding("repairWorkshop", target.x, target.y + 40, 0); }, 1500);
   setTimeout(() => { if (canAfford(TURRET_COST, "ai")) scheduleAIBuilding("turret", target.x, target.y - 60, 0); }, 2000);
-  setTimeout(() => { if (canAfford(TURRET_COST, "ai")) scheduleAIBuilding("turret", target.x - 60, target.y - 30, 0); }, 2500);
+  setTimeout(() => { if (canAfford(TURRET_COST, "ai")) scheduleAIBuilding("turret2", target.x - 60, target.y - 30, 0); }, 2500);
   setTimeout(() => { if (canAfford(TURRET_COST, "ai")) scheduleAIBuilding("turret", target.x + 60, target.y - 30, 0); }, 3000);
   
   // Помечаем ресурсы в этом кластере как исчерпанные
@@ -380,7 +433,7 @@ function findOptimalWarehousePosition() {
   let bestPos = null;
   let bestScore = -Infinity;
   const step = 50;
-  const maxDistanceFromBase = 500; // максимальное расстояние от базы ИИ
+  const maxDistanceFromBase = 300; // максимальное расстояние от базы ИИ
   
   for (let x = step / 2; x < worldWidth; x += step) {
     for (let y = step / 2; y < worldHeight; y += step) {
@@ -643,11 +696,23 @@ function attemptToHireRepairman() {
   gameState.buildings
     .filter(b => b.owner === "ai" && b.type === "repairWorkshop")
     .forEach(workshop => {
-      while (workshop.repairman < workshop.capacity && canSpendResources(REPAIRMAN_COST, "ai")) {
-        aiHireRepairMan(workshop);
+      // Если количество ремонтников ниже максимально допустимого
+      while (workshop.repairman < workshop.capacity) {
+        // Дополнительная проверка: если поврежденных зданий много, можно попробовать нанять ремонтника даже при небольшом дефиците ресурсов
+        if (canSpendResources(REPAIRMAN_COST, "ai") || (countDamagedBuildings("ai") / gameState.buildings.filter(b => b.owner === "ai").length) > 0.3) {
+          aiHireRepairMan(workshop);
+        } else {
+          break;
+        }
       }
     });
 }
+
+// Вспомогательная функция для подсчета поврежденных зданий
+function countDamagedBuildings(owner) {
+  return gameState.buildings.filter(b => b.owner === owner && b.health < b.maxHealth * 0.7).length;
+}
+
 
 // Обновлённая функция для строительства мастерской ремонта ИИ
 function attemptToBuildRepairWorkshop() {
@@ -665,19 +730,29 @@ function attemptToBuildRepairWorkshop() {
 
 // Функция для расчёта резервируемых ресурсов для владельца (например, "ai")
 function getReservedResources(owner) {
-  // Базовые резервы (эти значения можно подбирать экспериментально)
+  // Базовый резерв – можно экспериментально подобрать значения
   const baseReserve = { gold: 50, silicon: 50, plasma: 50 };
+
+  // Фактор прогресса – растёт с течением времени (например, до 10 минут игры)
+  const gameProgressFactor = Math.min(1, performance.now() / (10 * 60 * 1000));
   
-  // Определяем фактор прогресса игры (например, до 10 минут игры)
-  const gameProgressFactor = Math.min(1, performance.now() / (2 * 60 * 1000));
+  // Дополнительный коэффициент, если повреждений много (примерно: если более 30% зданий повреждены)
+  const totalBuildings = gameState.buildings.filter(b => b.owner === owner).length;
+  const damagedBuildings = gameState.buildings.filter(b =>
+    b.owner === owner && (b.health / b.maxHealth) < 0.7
+  ).length;
+  const damageFactor = (totalBuildings > 0) ? (damagedBuildings / totalBuildings) : 0;
   
-  // Резерв увеличивается с прогрессом (например, до 100% от базовых значений)
+  // Если damageFactor больше порога, резерв увеличивается дополнительно
+  const additionalReserveFactor = (damageFactor > 0.3) ? damageFactor : 0;
+
   return {
-    gold: baseReserve.gold * (1 + gameProgressFactor),
-    silicon: baseReserve.silicon * (1 + gameProgressFactor),
-    plasma: baseReserve.plasma * (1 + gameProgressFactor)
+    gold: baseReserve.gold * (1 + gameProgressFactor + additionalReserveFactor),
+    silicon: baseReserve.silicon * (1 + gameProgressFactor + additionalReserveFactor),
+    plasma: baseReserve.plasma * (1 + gameProgressFactor + additionalReserveFactor)
   };
 }
+
 
 // Функция, проверяющая возможность потратить ресурсы, не опустив баланс ниже резерва
 function canSpendResources(cost, owner) {
@@ -767,7 +842,7 @@ function getClusterCenter(cluster) {
 
 // Функция для выбора случайной точки в круге (зоне боевого соприкосновения)
 function getBattleZone(center, radius) {
-  const angle = Math.random() * 2 * Math.PI;
+  const angle = Math.random() * 4 * Math.PI;
   const r = Math.random() * radius;
   return { x: center.x + r * Math.cos(angle), y: center.y + r * Math.sin(angle) };
 }
@@ -829,7 +904,7 @@ function assignDefendersToBuildings() {
       const offsetX = (Math.random() - 0.5) * 20;
       const offsetY = (Math.random() - 0.5) * 20;
       defender.commandQueue.push({ type: "move", x: building.x + offsetX, y: building.y + offsetY });
-      console.log(`Назначен защитник ${defender.type} для ${building.type} на (${Math.round(building.x)}, ${Math.round(building.y)})`);
+      //console.log(`Назначен защитник ${defender.type} для ${building.type} на (${Math.round(building.x)}, ${Math.round(building.y)})`);
     }
   });
 }
@@ -849,23 +924,31 @@ function computeInfrastructureBalance() {
 //////////////////////////////////////////////////////////////
 // Функция расчёта безопасного маршрута атаки с обходом опасных зон
 function calculateSafeAttackRoute(start, target, checkRadius = 1000, enemyThreshold = 5) {
-  const midPoint = { x: (start.x + target.x) / 2, y: (start.y + target.y) / 2 };
-  const enemiesAtMid = getEnemiesInRange(midPoint, checkRadius).filter(e => e.owner === "player");
-  if (enemiesAtMid.length >= enemyThreshold) {
+  // Первоначальный промежуточный пункт
+  let midPoint = { x: (start.x + target.x) / 2, y: (start.y + target.y) / 2 };
+
+  // Если промежуточная точка находится в опасной зоне, смещаем её перпендикулярно линии атаки
+  if (isGreyZone(midPoint)) {
     const dx = target.x - start.x;
     const dy = target.y - start.y;
     const length = Math.hypot(dx, dy);
+    // Нормальный вектор к линии атаки
     const perpX = -dy / length;
     const perpY = dx / length;
+    // Смещение на фиксированное расстояние
     const offsetMagnitude = 250;
-    const safeMid = { x: midPoint.x + perpX * offsetMagnitude, y: midPoint.y + perpY * offsetMagnitude };
-    const enemiesAtSafeMid = getEnemiesInRange(safeMid, checkRadius).filter(e => e.owner === "player");
-    if (enemiesAtSafeMid.length < enemyThreshold) {
-      return [safeMid, target];
-    }
+    midPoint = { x: midPoint.x + perpX * offsetMagnitude, y: midPoint.y + perpY * offsetMagnitude };
   }
-  return [target];
+  
+  // Если и новая промежуточная точка не безопасна, можно дополнительно добавить логику перегруппировки
+  if (isGreyZone(midPoint)) {
+    //console.log("Невозможно найти безопасный промежуточный пункт для атаки");
+    return [target]; // В крайнем случае возвращаем прямой маршрут
+  }
+  
+  return [midPoint, target];
 }
+
 
 
 // Новая функция, реализующая мгновенную реакцию на атаку – она выдаёт команды свободным юнитам, если вокруг здания обнаружены враги:
@@ -1139,7 +1222,7 @@ function sendAttackGroup() {
         unit.commandQueue.push({ type: "move", x: regroupPos.x, y: regroupPos.y });
         
       });
-      console.log("Тактика: Прямая атака с индивидуальной перегруппировкой");
+     // console.log("Тактика: Прямая атака с индивидуальной перегруппировкой");
       break;
       
     case 1:
@@ -1156,7 +1239,7 @@ function sendAttackGroup() {
         unit.commandQueue.push({ type: "move", x: flankX, y: flankY });
         
       });
-      console.log("Тактика: Фланговая атака с индивидуальной перегруппировкой");
+      //console.log("Тактика: Фланговая атака с индивидуальной перегруппировкой");
       break;
       
     case 2:
@@ -1183,7 +1266,7 @@ function sendAttackGroup() {
 		  
         
       });
-      console.log("Тактика: Отвлекающий манёвр с индивидуальной перегруппировкой");
+     // console.log("Тактика: Отвлекающий манёвр с индивидуальной перегруппировкой");
       break;
       
     case 3:
@@ -1204,7 +1287,7 @@ function sendAttackGroup() {
           
         }
       });
-      console.log("Тактика: Гибридная (элитные держатся на SAFE_DISTANCE, остальные перегруппируются)");
+      //console.log("Тактика: Гибридная (элитные держатся на SAFE_DISTANCE, остальные перегруппируются)");
       break;
   }
   this.lastAttackTime = performance.now();
@@ -1291,7 +1374,7 @@ function updateGarrisonAssignments() {
         const offsetX = (Math.random() - 0.5) * 40;
         const offsetY = (Math.random() - 0.5) * 40;
         unit.commandQueue.push({ type: "move", x: building.x + offsetX, y: building.y + offsetY });
-        console.log(`Назначен ${unit.type} для защиты ${building.type} на (${Math.round(building.x)}, ${Math.round(building.y)})`);
+       // console.log(`Назначен ${unit.type} для защиты ${building.type} на (${Math.round(building.x)}, ${Math.round(building.y)})`);
       });
     }
   });
@@ -1478,7 +1561,7 @@ function updateGarrisonAssignmentsClustered() {
         const offsetX = (Math.random() - 0.5) * 40;
         const offsetY = (Math.random() - 0.5) * 40;
         unit.commandQueue.push({ type: "move", x: building.x + offsetX, y: building.y + offsetY });
-        console.log(`Назначен ${unit.type} для защиты ${building.type} на (${Math.round(building.x)}, ${Math.round(building.y)})`);
+        //console.log(`Назначен ${unit.type} для защиты ${building.type} на (${Math.round(building.x)}, ${Math.round(building.y)})`);
       });
       totalAssignedGlobal += unitsToAssign.length;
       // Если после назначения защитников для здания требуемое число достигнуто, блокируем его гарнизон
@@ -1611,90 +1694,125 @@ function startAssaultEliteCycle(unit) {
 
 
 function aiLogic() {
-  // Обновляем очередь построек, защиту и атаки
+  // 1. Обновление очереди построек, модулей защиты и атаки
   processBuildQueue();
   defenseModule.update();
   attackModule.update();
 
+  // 2. Оценка текущей численности боевых сил
+  const aiMilitaryCount = gameState.units.filter(u =>
+    u.owner === "ai" && (u.type === "fighter" || u.type === "assault" || u.type === "elite")
+  ).length;
+  const playerMilitaryCount = gameState.units.filter(u =>
+    u.owner === "player" && (u.type === "fighter" || u.type === "assault" || u.type === "elite")
+  ).length;
+
+  // 3. Динамическое переключение тактики по соотношению сил:
+  // Если у игрока значительно больше военных, ИИ переходит в оборонительную тактику.
+  if (playerMilitaryCount > aiMilitaryCount * 1.5) {
+    aiPhase = PHASES.basicDefense;
+    //console.log("Переход на оборону: basicDefense (численное преимущество игрока)");
+  }
+
+  // 4. Выполнение логики в зависимости от текущей фазы ИИ
   switch (aiPhase) {
     case PHASES.initialEconomy:
-      // Фаза начальной экономики: строим 4 склада, 1 ремонтную мастерскую и нанимаем рабочих
-      ensureInitialInfrastructure();
+      // Фаза начальной экономики: строим начальную инфраструктуру
+      ensureInitialInfrastructure();  // Например, 4 склада, 1 ремонтная мастерская
       attemptToHireWorkers();
-		
-		  reactToAttack();
-      // Если инфраструктура достигнута, переходим к базовой защите
+      reactToAttack();
+
+      // Если инфраструктура достигнута, переключаемся на базовую защиту
       if (countBuildings("warehouse", "ai") >= 4 && hasBuilding("repairWorkshop", "ai")) {
         aiPhase = PHASES.basicDefense;
-        console.log("Переход к фазе basicDefense");
+        //console.log("Переход к фазе basicDefense");
       }
       break;
 
     case PHASES.basicDefense:
-	  attemptToBuildWarehouse();  // Строим склады для дальнейшей экспансии
+      // Строим склады с учетом зон опасности (с проверкой в attemptToBuildWarehouse)
+      attemptToBuildWarehouse();
       attemptToHireWorkers();
-      // Фаза базовой защиты: строим казармы, турели и нанимаем минимальный гарнизон
+
+      // Строим казармы и турели для формирования базовой обороны
       attemptToBuild("barracks", 1);
       attemptToBuild("turret", 2);
       attemptToHireMilitaryUnits();
-		  
-		  reactToAttack();
-      // Если все ключевые здания защищены, переходим к улучшению инфраструктуры
+      reactToAttack();
+
+      // Если все ключевые здания защищены (например, гарнизоны распределены), переходим к улучшенной инфраструктуре
       if (allKeyBuildingsGarrisoned()) {
         aiPhase = PHASES.advancedEconomy;
-        console.log("Переход к фазе advancedEconomy");
+        //console.log("Переход к фазе advancedEconomy");
       }
       break;
 
     case PHASES.advancedEconomy:
-      // Фаза улучшения инфраструктуры: строим улучшенные здания (base2, barracks2, turret2)
-		  
+      // Строим улучшенные здания: base2, barracks2, turret2 и т.д.
       aiBuildImprovedBuildings();
-		  attemptToHireMilitaryUnits();
-		  attemptToHireRepairman();
-		  reactToAttack();
-		  
-      // Если улучшенные здания (например, base2 и barracks2) построены, переходим к набору армии
+      attemptToHireMilitaryUnits();
+      attemptToHireRepairman();
+      reactToAttack();
+
+      // Если построены улучшенные здания (например, base2 и barracks2), переключаемся на набор армии
       if (hasBuilding("base2", "ai") && hasBuilding("barracks2", "ai")) {
         aiPhase = PHASES.armyBuildUp;
-        console.log("Переход к фазе armyBuildUp");
+        //console.log("Переход к фазе armyBuildUp");
       }
       break;
 
     case PHASES.armyBuildUp:
-		  aiBuildImprovedBuildings()
-      // Фаза набора армии: нанимаем военные юниты
+      // Продолжаем улучшать инфраструктуру и набираем военные единицы
+      aiBuildImprovedBuildings();
       attemptToHireMilitaryUnits();
-		  reactToAttack();
-      // При условии наличия улучшенных зданий (base3, barracks3, и хотя бы turret2 или turret3)
-      // и достаточного количества ресурсов, переходим к экспансии и активной атаке
+      reactToAttack();
+
+      // Если улучшенные здания (base3, barracks3) и достаточное количество турелей присутствуют,
+      // а также ресурсы позволяют экспансию, переходим к фазе экспансии и активной атаки
       if (hasBuilding("base3", "ai") &&
           hasBuilding("barracks3", "ai") &&
-          (hasBuilding("turret2", "ai") || ("turret", "ai"))  &&
+          (hasBuilding("turret2", "ai") || hasBuilding("turret", "ai")) &&
           (gameState.aiResources.gold > MIN_GOLD_FOR_EXPANSION * 2)) {
         aiPhase = PHASES.expansionAndAttack;
-        console.log("Переход к фазе expansionAndAttack");
+        //console.log("Переход к фазе expansionAndAttack");
       }
       break;
 
     case PHASES.expansionAndAttack:
-      // Фаза экспансии и атаки: обновляем инфраструктуру, выполняем атаки и продолжаем набор армии
+      // Фаза экспансии и атаки: обновляем экономику, продолжаем набор войск и запускаем атаки
       economicModule.update();
       attackModule.update();
       attemptToHireWorkers();
       attemptToHireRepairman();
       attemptToHireMilitaryUnits();
-		  reactToAttack();
+      reactToAttack();
+
+      // Если ИИ имеет численное преимущество, инициируем массовую атаку через безопасный маршрут
+      if (aiMilitaryCount > playerMilitaryCount * 1.2) {
+        const expansionTarget = findExpansionTarget();
+        const safeRoute = calculateSafeAttackRoute(aiBase, expansionTarget);
+        const attackGroup = formMixedAttackGroupDynamic();
+        attackGroup.forEach(unit => {
+          // Полностью очищаем очередь команд и задаем маршрут по безопасной схеме
+          unit.commandQueue = [];
+          safeRoute.forEach(point => {
+            unit.commandQueue.push({ type: "move", x: point.x, y: point.y });
+          });
+          // Затем приступаем к атаке
+          unit.commandQueue.push({ type: "attack", target: expansionTarget });
+        });
+      }
       break;
 
     default:
-      // Если фаза не распознана – можно задать дефолтные действия
       console.log("Фаза ИИ не распознана, выполняем стандартные действия.");
       break;
   }
-	
-	checkAndSellUnprofitableBuildings();
+
+  // 5. После выполнения тактических действий проверяем неэффективные здания и инициируем их продажу
+  checkAndSellUnprofitableBuildings();
 }
+
 
 // Далее запускается основной цикл логики AI, например:
 function gameLoopAI() {

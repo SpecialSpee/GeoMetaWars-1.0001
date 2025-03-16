@@ -1,10 +1,10 @@
 function triggerSale(building) {
-  // Проверяем, что здание всё ещё существует в gameState
+  // Проверяем, что здание всё ещё существует
   if (!gameState.buildings.includes(building)) return;
   
   // Если здание является турелью, останавливаем её цикл
   if (building.type === "turret" || building.type === "turret2") {
-    building.active = false; // Сбрасываем флаг активности
+    building.active = false;
     if (building.turretCycleId) {
       cancelAnimationFrame(building.turretCycleId);
       building.turretCycleId = null;
@@ -14,39 +14,36 @@ function triggerSale(building) {
   // Удаляем здание из gameState
   gameState.buildings = gameState.buildings.filter(b => b !== building);
   
-  // Проверяем и очищаем ссылки на здание у всех юнитов
+  // Очищаем ссылки на здание у юнитов
   gameState.units.forEach(unit => {
-    // Если цель юнита равна проданному зданию, сбрасываем её
     if (unit.target === building) {
       unit.target = null;
     }
-    // Удаляем из очереди команд все команды, связанные с атакой на это здание
     if (unit.commandQueue && unit.commandQueue.length > 0) {
       unit.commandQueue = unit.commandQueue.filter(cmd => !(cmd.type === "attack" && cmd.target === building));
     }
   });
   
-  // Вызываем эффект разрушения здания
+  // Запускаем эффект разрушения и возврат части ресурсов
   spawnDestructionFragments(building.x, building.y, building.width, building.height, building.type);
-  
-  // Рассчитываем возврат: 20% от затраченной стоимости здания
   const refundPercent = 0.2;
   const refundGold = building.buildCost.gold * refundPercent;
   const refundSilicon = building.buildCost.silicon * refundPercent;
   const refundPlasma = building.buildCost.plasma * refundPercent;
-  
-  // Добавляем ресурсы игроку
   gameState.playerResources.gold += refundGold;
   gameState.playerResources.silicon += refundSilicon;
   gameState.playerResources.plasma += refundPlasma;
-  
-  // Обновляем UI и выводим уведомление
   updateResourceUI();
   showWarning(`Здание продано! Возврат: Gold ${Math.round(refundGold)}, Silicon ${Math.round(refundSilicon)}, Plasma ${Math.round(refundPlasma)}`);
   
-  // Дополнительная очистка: если здание хранится в других структурах (например, в квадродереве)
+  // Добавляем координаты проданного здания в soldBuildings
+  soldBuildings.push({ x: building.x, y: building.y });
+  
+  // Обновляем квадродерево
   cleanUpBuildingReferences();
 }
+
+
 
 // Функция для обновления квадродерева (и других структур, если необходимо)
 function cleanUpBuildingReferences() {
@@ -82,31 +79,20 @@ function clearSaleIndicator() {
 }
 
 function checkAndSellUnprofitableBuildings() {
-  // Проходим по всем зданиям, принадлежащим ИИ
   gameState.buildings.forEach(building => {
-    if (building.owner !== "ai") return; // только здания ИИ
-
-    // Исключаем критически важные здания
+    if (building.owner !== "ai") return;
     if (["base", "base2", "base3"].includes(building.type)) return;
-
-    // Если здоровье здания ниже 50% от максимума
     if (building.health < building.maxHealth * 0.5) {
-      // Находим ремонтников в радиусе 100 единиц от здания
       const nearbyRepairmen = getObjectsInRange({ x: building.x, y: building.y }, 100)
                                 .filter(u => u.owner === "ai" && u.type === "repairman");
-
-      // Дополнительно можно проверить, достаточно ли ресурсов для ремонта
       const resourcesLow = (
-        gameState.aiResources.gold < 100 || 
-        gameState.aiResources.silicon < 100 || 
+        gameState.aiResources.gold < 100 ||
+        gameState.aiResources.silicon < 100 ||
         gameState.aiResources.plasma < 50
       );
-
-      // Если нет ремонтников или ресурсы недостаточны для ремонта
       if (nearbyRepairmen.length === 0 || resourcesLow) {
-        // Инициируем продажу здания
-        console.log("ИИ продает здание", building.type, "из-за низкого состояния и недостатка ремонта");
-        triggerSale(building);
+        console.log("ИИ инициирует продажу здания:", building.type);
+        queueSale(building);
       }
     }
   });
@@ -608,21 +594,21 @@ function drawFragments() {
 
 // В constants.js добавляем новые константы для расчёта влияния объектов:
 
-// Вес для зданий
-const BUILDING_INFLUENCE_WEIGHTS = {
-  beacon: 3,           // Маяк – самый высокий вклад
-  turret: 2.5,         // Турели (основные и улучшенные) – чуть ниже
-  turret2: 2.5,
-  warehouse: 1,        // Склады – базовый вес
-  repairWorkshop: 1    // Мастерские ремонта – базовый вес
-};
-
-// Вес для юнитов
-const UNIT_INFLUENCE_WEIGHTS = {
-  fighter: 0.5,        // Истребитель – небольшой вклад
-  assault: 1,          // Штурмовик – средний вклад
-  elite: 1.5           // Элита – самый высокий вклад среди юнитов
-};
+//// Вес для зданий
+//const BUILDING_INFLUENCE_WEIGHTS = {
+//  beacon: 3,           // Маяк – самый высокий вклад
+//  turret: 2.5,         // Турели (основные и улучшенные) – чуть ниже
+//  turret2: 2.5,
+//  warehouse: 1,        // Склады – базовый вес
+//  repairWorkshop: 1    // Мастерские ремонта – базовый вес
+//};
+//
+//// Вес для юнитов
+//const UNIT_INFLUENCE_WEIGHTS = {
+//  fighter: 0.5,        // Истребитель – небольшой вклад
+//  assault: 1,          // Штурмовик – средний вклад
+//  elite: 1.5           // Элита – самый высокий вклад среди юнитов
+//};
 
 // Если удобно, можно объединить в один объект:
 const INFLUENCE_WEIGHTS = {
@@ -646,28 +632,11 @@ const INFLUENCE_WEIGHTS = {
 };
 
 
-// Эти значения можно корректировать по результатам тестирования и балансировки.
-
-
-
-
 
 let fogMap = [];               // двумерный массив для хранения состояния видимости (0 – туман, 1 – видимость)
 let persistentFogMap = [];
 let influenceGrid = [];
 
-
-
-
-
-// Предполагаем, что у нас уже определены:
-// - influenceGrid – сетка, созданная на шаге 1.
-// - quadtree – глобальное квадродерево, обновляемое в игровом цикле.
-// - FOG_CELL_SIZE и константы из constants.js.
-// - Функция getInfluenceWeight(object) из шага 2, которая возвращает вес для здания или юнита.
-// Новый метод обновления зоны влияния на основе перераспределения вклада от объектов.
-// Вместо перебора по каждой ячейке мы пробегаем по объектам (здания и юниты) и "распространяем" их вклад по ячейкам,
-// которые попадают в их радиус влияния.
 // Глобальная переменная для отслеживания количества зданий при последнем обновлении кэша
 let cachedBuildingsCount = 0;
 
@@ -779,57 +748,7 @@ const influenceQueryRadius = 200;
  // Параметр затухания (σ) – регулирует, как быстро вклад объекта уменьшается с расстоянием
  const sigma = 200;
 
-//function updateInfluenceGrid() {
-//  // Задаём радиус запроса – можно настраивать (например, 200 единиц)
-//  const influenceQueryRadius = 200;
-//  // Параметр затухания (σ) – регулирует, как быстро вклад объекта уменьшается с расстоянием
-//  const sigma = 200;
-//  
-//  // Перебираем все ячейки influenceGrid
-//  for (let r = 0; r < influenceGrid.length; r++) {
-//    for (let c = 0; c < influenceGrid[r].length; c++) {
-//      const cell = influenceGrid[r][c];
-//      // Сброс значения влияния для текущей ячейки
-//      cell.influence = 0;
-//      
-//      // Определяем область запроса: квадрат с центром в ячейке и сторонами 2*influenceQueryRadius
-//      const queryRect = {
-//        x: cell.center.x - influenceQueryRadius,
-//        y: cell.center.y - influenceQueryRadius,
-//        width: influenceQueryRadius * 2,
-//        height: influenceQueryRadius * 2
-//      };
-//      
-//      // Получаем объекты в данной области с помощью квадродерева
-//      const objects = quadtree.query(queryRect);
-//      
-//      objects.forEach(obj => {
-//        // Проверяем, что у объекта есть координаты (для объектов, которые участвуют в расчёте)
-//        if (typeof obj.x !== 'number' || typeof obj.y !== 'number') return;
-//        
-//        // Расстояние от центра ячейки до объекта
-//        const dx = obj.x - cell.center.x;
-//        const dy = obj.y - cell.center.y;
-//        const distance = Math.hypot(dx, dy);
-//        
-//        // Рассчитываем коэффициент затухания: exp(-distance²/(2*sigma²))
-//        const decayFactor = Math.exp(- (distance * distance) / (2 * sigma * sigma));
-//        
-//        // Получаем вес объекта (зависит от типа – здания или юнита)
-//        const weight = getInfluenceWeight(obj);
-//        
-//        // Определяем знак вклада:
-//        // Если объект принадлежит игроку – положительный вклад,
-//        // если ИИ – отрицательный вклад.
-//        const sign = (obj.owner === "player") ? 1 : (obj.owner === "ai" ? -1 : 0);
-//        
-//        // Вклад объекта: вес * затухание * знак
-//        const contribution = weight * decayFactor * sign;
-//        cell.influence += contribution;
-//      });
-//    }
-//  }
-//}
+
 
 // Пример функции, возвращающей вес объекта – если её ещё нет, можно использовать её из шага 2.
 function getInfluenceWeight(object) {
@@ -1358,7 +1277,7 @@ function renderPersistentFog() {
         const worldX = c * FOG_CELL_SIZE;
         const worldY = r * FOG_CELL_SIZE;
         const screenPos = worldToScreen(worldX, worldY);
-        ctx.fillStyle = "rgba(0,0,0,1)";
+        ctx.fillStyle = "rgba(0,0,0,0.1)";
         ctx.fillRect(screenPos.x, screenPos.y, cellScreenSize, cellScreenSize);
       } else if (fogMap[r][c] < 1) {
         // Если ячейка была открыта ранее, но сейчас не видна – слегка затемняем
@@ -1402,9 +1321,9 @@ function resizeCanvas() {
   canvas.width = window.innerWidth;
   canvas.height = window.innerHeight;
   
-  // Размеры виртуального мира – например, в 2 раза больше видимой области
-  worldWidth = canvas.width * 2;
-  worldHeight = canvas.height * 2;
+  // Размеры виртуального мира – например, в 3 раза больше видимой области
+  worldWidth = canvas.width * 3;
+  worldHeight = canvas.height * 3;
   
   // Пересоздаём звездное поле
   starField.init();
@@ -1563,9 +1482,9 @@ function createGoldShape() {
   }
   return { points, baseRadius };
 }
-// Функция линейной интерполяции угла с учётом краткости
+// Функция плавной интерполяции угла (если её ещё нет)
 function lerpAngle(a, b, t) {
-  let diff = ((b - a + Math.PI) % (2 * Math.PI)) - Math.PI;
+  const diff = Math.atan2(Math.sin(b - a), Math.cos(b - a));
   return a + diff * t;
 }
 // Функция динамичного перемещения с физической моделью (ускорение, инерция, орбитальное маневрирование)
@@ -1579,7 +1498,7 @@ function dynamicMove(unit, target, deltaTime) {
   const desiredAngle = Math.atan2(dy, dx);
   
   // Плавное приближение к нужному углу (можно настроить скорость поворота)
-  const maxTurnSpeed = 0.05;
+  const maxTurnSpeed = 0.01;
   unit.angle = lerpAngle(unit.angle, desiredAngle, maxTurnSpeed);
   
   // Определяем направление "носа"
@@ -1607,7 +1526,8 @@ function dynamicMove(unit, target, deltaTime) {
   if (Math.abs(distanceError) < 1) {
     ax = tanX * orbitStrength;
     ay = tanY * orbitStrength;
-  } else {
+  } 
+	else {
     ax = frontDirX * distanceError * approachStrength + tanX * orbitStrength;
     ay = frontDirY * distanceError * approachStrength + tanY * orbitStrength;
   }
@@ -1616,7 +1536,7 @@ function dynamicMove(unit, target, deltaTime) {
   if (typeof unit.vy !== 'number') unit.vy = 0;
   
   // Применяем затухание, чтобы сохранить плавность движения
-  const damping = 0.995;
+  const damping = 0.9;
   unit.vx = unit.vx * damping + ax * deltaTime;
   unit.vy = unit.vy * damping + ay * deltaTime;
   
@@ -1624,90 +1544,73 @@ function dynamicMove(unit, target, deltaTime) {
   const maxSpeed = 50;
   const currentSpeed = Math.hypot(unit.vx, unit.vy);
   if (currentSpeed > maxSpeed) {
-    unit.vx = (unit.vx / currentSpeed) * maxSpeed;
-    unit.vy = (unit.vy / currentSpeed) * maxSpeed;
+    unit.vx = (unit.vx / currentSpeed);
+    unit.vy = (unit.vy / currentSpeed);
   }
   
   unit.x += unit.vx * deltaTime;
   unit.y += unit.vy * deltaTime;
 }
 
-function dynamicMoveAdvanced(unit, target, deltaTime) {
-  const dx = target.x - unit.x;
-  const dy = target.y - unit.y;
+// Функция движения юнитов с анимацией
+function moveUnit(unit, targetX, targetY, callback, spreadDone = false) {
+  const startX = unit.x, startY = unit.y;
+  const dx = targetX - startX, dy = targetY - startY;
   const distance = Math.hypot(dx, dy);
-  if (distance === 0) return;
+  if (distance < 5) {
+    if (callback) callback();
+    return;
+  }
+  unit.angle = Math.atan2(dy, dx);
+  // Используем unit.speed, либо, если не задан, WORKER_SPEED (или другой подходящий базовый параметр)
+  const speed = unit.speed || WORKER_SPEED;
+  const duration = distance / speed; 
+  const startTime = performance.now();
 
-  // Основной желаемый угол движения к цели
-  const desiredAngle = Math.atan2(dy, dx);
+  function animate() {
+  const currentTime = performance.now();
+  const elapsed = (currentTime - startTime) / 1000;
+  const progress = Math.min(elapsed / duration, 1);
 
-  // Плавное приближение к нужному углу
-  const baseTurnSpeed = 0.05;
-  unit.angle = lerpAngle(unit.angle, desiredAngle, baseTurnSpeed);
-
-  // Направление "носа"
-  const frontDirX = Math.cos(unit.angle);
-  const frontDirY = Math.sin(unit.angle);
-
-  // Желаемая дистанция: для зданий — граница, для юнитов — заданное значение или 100
-  const desiredDistance = target instanceof Building 
-    ? (Math.max(target.width, target.height) / 2) + 50 
-    : (unit.desiredDistance || 100);
-
-  const distanceError = distance - desiredDistance;
-
-  // Базовое ускорение, направленное по линии к цели
-  const approachStrength = 1.1;
-  const ax_base = frontDirX * distanceError * approachStrength;
-  const ay_base = frontDirY * distanceError * approachStrength;
-
-  // Дополнительное ускорение (тактическая составляющая)
-  let tacticAx = 0, tacticAy = 0;
-  if (unit.tactic === "orbit") {
-    // Орбитальное движение: постоянное тангенциальное ускорение, направленное перпендикулярно линии к цели
-    const orbitStrength = 50; // настройте по желанию
-    // Перпендикуляр к desiredAngle
-    const perpX = -Math.sin(desiredAngle);
-    const perpY = Math.cos(desiredAngle);
-    tacticAx = perpX * orbitStrength;
-    tacticAy = perpY * orbitStrength;
-  } else if (unit.tactic === "figure8") {
-    // Атака по "восьмерке": периодическое изменение направления тангенциального ускорения
-    const figure8Strength = 50; // настройте по желанию
-    // Частота, например, 1 циклов в секунду
-    const t = performance.now() / 1000;
-    const factor = Math.sin(t * 2 * Math.PI);
-    const perpX = -Math.sin(desiredAngle);
-    const perpY = Math.cos(desiredAngle);
-    tacticAx = perpX * figure8Strength * factor;
-    tacticAy = perpY * figure8Strength * factor;
+  // Выполняем проверку на появление врагов только для ИИ-юнитов (не игрока)
+  if (unit.owner !== "player" && unit.type !== "worker" && unit.type !== "repairman") {
+    const range = unit.range || 150;
+    const enemies = getEnemiesInRange({ x: unit.x, y: unit.y }, range)
+                      .filter(e => e.owner !== unit.owner);
+    if (enemies.length > 0) {
+      // Если враги обнаружены, прерываем движение и переключаемся на атаку
+      unit.commandQueue = [];
+      const nearestEnemy = enemies.reduce((prev, curr) =>
+        Math.hypot(curr.x - unit.x, curr.y - unit.y) < Math.hypot(prev.x - unit.x, prev.y - unit.y)
+          ? curr : prev
+      );
+      unit.commandQueue.push({ type: "attack", target: nearestEnemy });
+      if (unit.currentMovementAnimation) {
+        cancelAnimationFrame(unit.currentMovementAnimation);
+        unit.currentMovementAnimation = null;
+      }
+      return;
+    }
   }
 
-  // Итоговое ускорение – сумма базового и тактического
-  const ax = ax_base + tacticAx;
-  const ay = ay_base + tacticAy;
+  // Обновляем позицию юнита
+  unit.x = startX + dx * progress;
+  unit.y = startY + dy * progress;
 
-  if (typeof unit.vx !== 'number') unit.vx = 0;
-  if (typeof unit.vy !== 'number') unit.vy = 0;
-  
-  // Применяем затухание, чтобы сохранить плавность движения
-  const damping = 0.995;
-  unit.vx = unit.vx * damping + ax * deltaTime;
-  unit.vy = unit.vy * damping + ay * deltaTime;
-
-  // Ограничиваем максимальную скорость – увеличьте, если хотите сильный импульс
-  const maxSpeed = 60;
-  const currentSpeed = Math.hypot(unit.vx, unit.vy);
-  if (currentSpeed > maxSpeed) {
-    unit.vx = (unit.vx / currentSpeed) * maxSpeed;
-    unit.vy = (unit.vy / currentSpeed) * maxSpeed;
+  if (progress < 1) {
+    unit.currentMovementAnimation = requestAnimationFrame(animate);
+  } else {
+    unit.currentMovementAnimation = null;
+    if (callback) callback();
   }
+}
 
-  unit.x += unit.vx * deltaTime;
-  unit.y += unit.vy * deltaTime;
-  
-  // Для отладки можно вывести текущую скорость:
-  console.log("DynamicMoveAdvanced, current speed:", Math.hypot(unit.vx, unit.vy));
+if (unit.currentMovementAnimation) {
+  cancelAnimationFrame(unit.currentMovementAnimation);
+  unit.currentMovementAnimation = null;
+}
+animate();
+
 }
 // Функция атаки для штурмовика (assault)
 // Сначала выполняется стрельба, затем юнит продолжает маневрировать, используя новую физическую модель движения
@@ -1916,9 +1819,11 @@ function animateMoveAndScale(unit, targetX, targetY, targetScale, duration, call
 
 // Обновление UI ресурсов
 function updateResourceUI() {
-  document.getElementById("playerGold").innerText = gameState.playerResources.gold;
-  document.getElementById("playerSilicon").innerText = gameState.playerResources.silicon;
-  document.getElementById("playerPlasma").innerText = gameState.playerResources.plasma;
+  document.getElementById("playerGold").innerText = Math.round(gameState.playerResources.gold);
+  document.getElementById("playerSilicon").innerText = Math.round(gameState.playerResources.silicon);
+  document.getElementById("playerPlasma").innerText = Math.round(gameState.playerResources.plasma);
+
+
   document.getElementById("aiGold").innerText = gameState.aiResources.gold;
   document.getElementById("aiSilicon").innerText = gameState.aiResources.silicon;
   document.getElementById("aiPlasma").innerText = gameState.aiResources.plasma;
@@ -2283,7 +2188,7 @@ function processCommandQueue(unit) {
       }
     });
   } else if (command.type === "repair") {
-    console.log("Получена команда ремонта для объекта", command.target);
+    //console.log("Получена команда ремонта для объекта", command.target);
     if (unit.inWorkshop) {
   const exitOffset = 20;
   const angle = Math.random() * Math.PI * 2;
@@ -2328,67 +2233,5 @@ function generateResources() {
 }
 generateResources();
 
-function hireWorkerForPlayer(warehouse) {
-  if (warehouse.workers >= 5) { showWarning("Максимум рабочих для этого склада достигнут"); return; }
-  if (gameState.playerResources.gold < WORKER_COST.gold ||
-      gameState.playerResources.silicon < WORKER_COST.silicon ||
-      gameState.playerResources.plasma < WORKER_COST.plasma) {
-    showWarning("Недостаточно ресурсов для найма рабочего");
-    return;
-  }
-  gameState.playerResources.gold -= WORKER_COST.gold;
-  gameState.playerResources.silicon -= WORKER_COST.silicon;
-  gameState.playerResources.plasma -= WORKER_COST.plasma;
-  updateResourceUI();
-  warehouse.workers++;
-  const { spawn, target } = spawnAtBoundary(warehouse, 10);
-  const worker = new Unit("worker", "player", spawn.x, spawn.y);
-  worker.homeWarehouse = warehouse;
-  gameState.units.push(worker);
-  moveUnit(worker, target.x, target.y, () => {
-    if (AUTO_COLLECT_ENABLED && worker.commandQueue.length === 0) {
-      startWorkerCycle(worker, warehouse);
-    }
-  });
-}
 
-function hireFighterForPlayer(barracks) {
-  if (gameState.playerResources.gold < FIGHTER_COST.gold ||
-      gameState.playerResources.silicon < FIGHTER_COST.silicon ||
-      gameState.playerResources.plasma < FIGHTER_COST.plasma) {
-    showWarning("Недостаточно ресурсов для найма истребителя");
-    return;
-  }
-  gameState.playerResources.gold -= FIGHTER_COST.gold;
-  gameState.playerResources.silicon -= FIGHTER_COST.silicon;
-  gameState.playerResources.plasma -= FIGHTER_COST.plasma;
-  updateResourceUI();
-  barracks.fighters = (barracks.fighters || 0) + 1;
-  const { spawn, target } = spawnAtBoundary(barracks, 10);
-  const fighter = new Unit("fighter", "player", spawn.x, spawn.y);
-  gameState.units.push(fighter);
-  moveUnit(fighter, target.x, target.y, () => startFighterCycle(fighter));
-}
 
-function hireEliteForPlayer(barracks3) {
-  const ELITE_COST = { 
-    gold: FIGHTER_COST.gold * 2, 
-    silicon: FIGHTER_COST.silicon * 2, 
-    plasma: FIGHTER_COST.plasma * 2 
-  };
-  if (gameState.playerResources.gold < ELITE_COST.gold ||
-      gameState.playerResources.silicon < ELITE_COST.silicon ||
-      gameState.playerResources.plasma < ELITE_COST.plasma) {
-    showWarning("Недостаточно ресурсов для найма элитного бойца");
-    return;
-  }
-  gameState.playerResources.gold -= ELITE_COST.gold;
-  gameState.playerResources.silicon -= ELITE_COST.silicon;
-  gameState.playerResources.plasma -= ELITE_COST.plasma;
-  updateResourceUI();
-  barracks3.fighters = (barracks3.fighters || 0) + 1;
-  const { spawn, target } = spawnAtBoundary(barracks3, 10);
-  const elite = new Unit("elite", "player", spawn.x, spawn.y);
-  gameState.units.push(elite);
-  moveUnit(elite, target.x, target.y, () => startFighterCycle(elite));
-}

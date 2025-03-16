@@ -245,7 +245,7 @@ function drawFragments() {
 
 
 function spawnSupernovaEffect(resource) {
-  console.log("Запущен эффект суперновой для ресурса:", resource);
+  //console.log("Запущен эффект суперновой для ресурса:", resource);
   const effect = {
     x: resource.x,
     y: resource.y,
@@ -543,10 +543,69 @@ function recallRepairmenFromWorkshop(workshop) {
     hireRepairmanForPlayer(workshop);
   }
 }
+
+function hireWorkerForPlayer(warehouse) {
+  if (gameState.playerResources.gold < WORKER_COST.gold ||
+      gameState.playerResources.silicon < WORKER_COST.silicon ||
+      gameState.playerResources.plasma < WORKER_COST.plasma) {
+    showWarning("Недостаточно ресурсов для найма рабочего");
+    return;
+  }
+  gameState.playerResources.gold -= WORKER_COST.gold;
+  gameState.playerResources.silicon -= WORKER_COST.silicon;
+  gameState.playerResources.plasma -= WORKER_COST.plasma;
+  updateResourceUI();
+  warehouse.workers++;
+  const { spawn, target } = spawnAtBoundary(warehouse, 10);
+  const worker = new Unit("worker", "player", spawn.x, spawn.y);
+  worker.homeWarehouse = warehouse;
+  gameState.units.push(worker);
+  moveUnit(worker, target.x, target.y, () => startWorkerCycle(worker, warehouse));
+}
+
+
+function hireFighterForPlayer(barracks) {
+  if (gameState.playerResources.gold < FIGHTER_COST.gold ||
+      gameState.playerResources.silicon < FIGHTER_COST.silicon ||
+      gameState.playerResources.plasma < FIGHTER_COST.plasma) {
+    showWarning("Недостаточно ресурсов для найма истребителя");
+    return;
+  }
+  gameState.playerResources.gold -= FIGHTER_COST.gold;
+  gameState.playerResources.silicon -= FIGHTER_COST.silicon;
+  gameState.playerResources.plasma -= FIGHTER_COST.plasma;
+  updateResourceUI();
+  barracks.fighters = (barracks.fighters || 0) + 1;
+  const { spawn, target } = spawnAtBoundary(barracks, 10);
+  const fighter = new Unit("fighter", "player", spawn.x, spawn.y);
+  gameState.units.push(fighter);
+  moveUnit(fighter, target.x, target.y, () => startFighterCycle(fighter));
+}
+
+
+function hireEliteForPlayer(barracks3) {
+  // Используем фиксированные константы из constants.js:
+  const ELITE_COST = { gold: 58, silicon: 73, plasma: 36 };
+  if (gameState.playerResources.gold < ELITE_COST.gold ||
+      gameState.playerResources.silicon < ELITE_COST.silicon ||
+      gameState.playerResources.plasma < ELITE_COST.plasma) {
+    showWarning("Недостаточно ресурсов для найма элитного юнита");
+    return;
+  }
+  gameState.playerResources.gold -= ELITE_COST.gold;
+  gameState.playerResources.silicon -= ELITE_COST.silicon;
+  gameState.playerResources.plasma -= ELITE_COST.plasma;
+  updateResourceUI();
+  barracks3.fighters = (barracks3.fighters || 0) + 1;
+  const { spawn, target } = spawnAtBoundary(barracks3, 10);
+  const elite = new Unit("elite", "player", spawn.x, spawn.y);
+  gameState.units.push(elite);
+  moveUnit(elite, target.x, target.y, () => startFighterCycle(elite));
+}
 // Функция найма ремонтника для игрока
 function hireRepairmanForPlayer(workshop) {
   if (workshop.repairman >= workshop.capacity) {
-    showWarning("Максимум ремонтников для этой мастерской достигнут");
+    showWarning("Максимальное количество ремонтников для мастерской достигнуто");
     return;
   }
   if (gameState.playerResources.gold < REPAIRMAN_COST.gold ||
@@ -559,22 +618,17 @@ function hireRepairmanForPlayer(workshop) {
   gameState.playerResources.silicon -= REPAIRMAN_COST.silicon;
   gameState.playerResources.plasma -= REPAIRMAN_COST.plasma;
   updateResourceUI();
-  workshop.repairman++;  // увеличиваем счётчик, а не вызываем push
+  workshop.repairman++;
   const { spawn, target } = spawnAtBoundary(workshop, 10);
   const repairman = new Unit("repairman", "player", spawn.x, spawn.y);
   repairman.homeWorkshop = workshop;
   gameState.units.push(repairman);
-  moveUnit(repairman, target.x, target.y, () => {
-    autoRepairDamagedObjects();
-  });
+  moveUnit(repairman, target.x, target.y, () => { /* дальнейшие действия */ });
 }
+
 // Новая функция для найма штурмовика из казармы2
 function hireAssaultForPlayer(barracks2) {
-  const ASSAULT_COST = { 
-    gold: FIGHTER_COST.gold * 1.5, 
-    silicon: FIGHTER_COST.silicon * 1.5, 
-    plasma: FIGHTER_COST.plasma * 1.5 
-  };
+  const ASSAULT_COST = { gold: 23, silicon: 26, plasma: 12 };
   if (gameState.playerResources.gold < ASSAULT_COST.gold ||
       gameState.playerResources.silicon < ASSAULT_COST.silicon ||
       gameState.playerResources.plasma < ASSAULT_COST.plasma) {
@@ -611,17 +665,6 @@ function countMissingTurrets() {
     }
   });
   return missing;
-}
-
-function hasBuilding(buildingType, owner) {function hasBuilding(buildingType, owner) {
-  const found = gameState.buildings.some(b => b.owner === owner && b.type === buildingType);
-  console.log(`hasBuilding(${buildingType}, ${owner}) =>`, found, gameState.buildings.filter(b => b.type === "barracks"));
-  return found;
-}
-
-  return gameState.buildings.some(b => b.owner === owner && b.type === buildingType);
-	console.log("Построены казармы:", gameState.buildings.filter(b => b.type === "barracks"));
-
 }
 
 function armySize(owner, unitType) {
@@ -765,7 +808,7 @@ function gameLoop(time) {
 
 // Сначала определим утилитную функцию для генерации случайной точки в круге:
 function getRandomTargetPoint(centerX, centerY, radius) {
-  const angle = Math.random() * 2 * Math.PI;
+  const angle = Math.random() * 4 * Math.PI;
   const r = Math.random() * radius;
   return {
     x: centerX + r * Math.cos(angle),

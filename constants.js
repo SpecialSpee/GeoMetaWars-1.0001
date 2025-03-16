@@ -8,7 +8,7 @@ const gameState = {
   bullets: [],
   particles: [],
   resourceTokens: [],	
-  playerResources: { gold: 200, silicon: 300, plasma: 150 },
+  playerResources: { gold: 20000, silicon: 30000, plasma: 15000 },
   aiResources: { gold: 200, silicon: 300, plasma: 150 },
 	// Новые массивы для оптимизации
   attackers: [],    // для всех боевых юнитов (fighter, assault, elite)
@@ -24,7 +24,6 @@ const fragmentColors = {
   elite: "#808080",       // серый для элитных
   building: "#FFFF00"     // например, жёлтый для зданий (можно расширить для разных типов зданий)
 };
-
 
 // Пересмотр баланса цен – увеличены затраты для повышения стоимости юнитов и построек
 // Базовые постройки и инфраструктура
@@ -88,7 +87,7 @@ const ARTILLERY_BULLET_CONFIG = {
 };
 
 // Дополнительные константы для динамичного поведения fighter
-const BASE_SPEED = 50;
+const BASE_SPEED = 60;
 const TURN_SPEED = 40;
 const WANDER_STRENGTH = 100;
 const MIN_TURN_ANGLE = 200 * Math.PI / 180;
@@ -300,23 +299,22 @@ function requestRepair(target, workshop) {
 
 // Функция автоматического ремонта повреждённых объектов
 function autoRepairDamagedObjects() {
-  // Считаем объект повреждённым, если его здоровье меньше максимума на хотя бы 1 единицу
+  // Собираем все объекты, у которых здоровье значительно ниже максимального
   const repairables = [].concat(
-    gameState.units.filter(u => u.health < u.maxHealth - 1),
-    gameState.buildings.filter(b => b.health < b.maxHealth - 1)
+    gameState.units.filter(u => u.health < u.maxHealth * 0.9),
+    gameState.buildings.filter(b => b.health < b.maxHealth * 0.9)
   );
   
   repairables.forEach(target => {
-    // Если объект уже ремонтируется и прошло меньше 1 сек с последней попытки – ничего не делаем
+    // Если объект уже ремонтируется или с момента последней попытки прошло меньше 5 секунд – пропускаем
     if (target.isRepairing && target.repairAttemptedAt && performance.now() - target.repairAttemptedAt < 5000) {
       return;
     }
-    // Если объект уже ремонтируется, сбрасываем флаг, чтобы разрешить новый цикл
     if (target.isRepairing && performance.now() - target.repairAttemptedAt >= 5000) {
       target.isRepairing = false;
     }
     
-    // Находим мастерские для данного владельца
+    // Находим ближайшую ремонтную мастерскую
     let workshops = gameState.buildings.filter(b => b.owner === target.owner && b.type === "repairWorkshop");
     if (workshops.length === 0) return;
     
@@ -324,14 +322,15 @@ function autoRepairDamagedObjects() {
     workshops.sort((a, b) =>
       Math.hypot(target.x - a.x, target.y - a.y) - Math.hypot(target.x - b.x, target.y - b.y)
     );
-    
     const nearestWorkshop = workshops[0];
-    // Запускаем ремонт, только если объект находится в зоне контроля мастерской
+    
+    // Если объект находится в зоне контроля мастерской, инициируем ремонт
     if (Math.hypot(target.x - nearestWorkshop.x, target.y - nearestWorkshop.y) <= nearestWorkshop.controlRadius) {
       requestRepair(target, nearestWorkshop);
     }
   });
 }
+
 // Функция, возвращающая прямоугольник зоны строительства для здания
 function getBuildZoneRect(building) {
   // Если здание имеет buildZoneMultiplier (например, для маяка или базы), используем его, иначе — значение по умолчанию

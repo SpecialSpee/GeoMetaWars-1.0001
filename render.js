@@ -23,51 +23,6 @@ function screenToWorld(x, y) {
 }
 
 
-function renderFighter(unit) {
-  ctx.save();
-  // Переносим систему координат в позицию юнита
-  ctx.translate(unit.x, unit.y);
-  // Вычисляем угол для одного полного оборота за 7 секунд
-  const rotationAngle = ((performance.now() % 7000) / 7000) * (2 * Math.PI);
-  ctx.rotate(rotationAngle);
-  
-  // Настройка тени для 3D эффекта
-  ctx.shadowColor = "rgba(0, 0, 0, 0.6)";
-  ctx.shadowBlur = 6;
-  
-  // Рисуем форму истребителя
-  ctx.fillStyle = "#c00"; // базовый цвет корпуса
-  ctx.beginPath();
-  // Начинаем с хвоста
-  ctx.moveTo(-25, 0);
-  // Левое крыло
-  ctx.lineTo(-10, -12);
-  // Верхняя часть фюзеляжа
-  ctx.lineTo(10, -4);
-  // Нос (заостренный)
-  ctx.lineTo(25, 0);
-  // Нижняя часть фюзеляжа
-  ctx.lineTo(10, 4);
-  // Правое крыло
-  ctx.lineTo(-10, 12);
-  // Замыкаем форму (возвращаемся к хвосту)
-  ctx.closePath();
-  ctx.fill();
-  
-  // Если юнит движется, добавляем эффект огней двигателей за хвостом
-  if (Math.abs(unit.vx) > 0.1 || Math.abs(unit.vy) > 0.1) {
-    // Радиальный градиент для имитации пламени
-    const engineGlow = ctx.createRadialGradient(-30, 0, 0, -30, 0, 10);
-    engineGlow.addColorStop(0, "orange");
-    engineGlow.addColorStop(1, "transparent");
-    ctx.fillStyle = engineGlow;
-    ctx.beginPath();
-    ctx.arc(-30, 0, 10, 0, 2 * Math.PI);
-    ctx.fill();
-  }
-  
-  ctx.restore();
-}
 
 
 
@@ -530,42 +485,7 @@ function updateSaleIndicator() {
   }
 }
 // Функция обновления юнитов
-function updateUnits(deltaTime) {
-  gameState.units.forEach(unit => {
-    // Если у юнита нет команд, добавляем автоматическое поведение для боевых юнитов
-    if (unit.commandQueue.length === 0) {
-      // Если юнит является боевым и уже имеет цель
-      if ((unit.type === "fighter" || unit.type === "assault" || unit.type === "elite") && unit.target) {
-        // Если тактика ещё не установлена, можно случайно выбрать одну
-        if (!unit.tactic) {
-          // Например, случайный выбор между "orbit" и "figure8"
-          unit.tactic = Math.random() < 0.5 ? "orbit" : "figure8";
-        }
-        // Вызываем расширенное динамическое движение
-        dynamicMoveAdvanced(unit, unit.target, deltaTime);
-      } else {
-        // Для рабочих и ремонтников или если цели нет – стандартное поведение
-        unit.idleTimer += deltaTime;
-        // Здесь могут быть другие действия (например, автосбор ресурсов для рабочих)
-      }
-    }
-    // Если в очереди команд есть команды – обрабатываем их
-    if (unit.commandQueue.length > 0) {
-      processCommandQueue(unit);
-    }
-  });
-  
-  // Фильтрация юнитов с нулевым или отрицательным здоровьем
-  gameState.units = gameState.units.filter(unit => {
-    if (unit.health <= 0) {
-      removeUnit(unit);
-      return false;
-    }
-    return true;
-  });
-  
-  updateSwarmBehavior(deltaTime);
-}
+
 
 function updateTurret(building) {
   let ROTATION_SPEED = 0.01; // базовая скорость вращения (сканирование)
@@ -686,66 +606,7 @@ function renderResource(resource) {
   }
   ctx.restore();
 }
-// Функция движения юнитов с анимацией
-function moveUnit(unit, targetX, targetY, callback, spreadDone = false) {
-  const startX = unit.x, startY = unit.y;
-  const dx = targetX - startX, dy = targetY - startY;
-  const distance = Math.hypot(dx, dy);
-  if (distance < 5) {
-    if (callback) callback();
-    return;
-  }
-  unit.angle = Math.atan2(dy, dx);
-  // Используем unit.speed, либо, если не задан, WORKER_SPEED (или другой подходящий базовый параметр)
-  const speed = unit.speed || WORKER_SPEED;
-  const duration = distance / speed; 
-  const startTime = performance.now();
 
-  function animate() {
-  const currentTime = performance.now();
-  const elapsed = (currentTime - startTime) / 1000;
-  const progress = Math.min(elapsed / duration, 1);
-
-  // Выполняем проверку на появление врагов только для ИИ-юнитов (не игрока)
-  if (unit.owner !== "player" && unit.type !== "worker" && unit.type !== "repairman") {
-    const range = unit.range || 150;
-    const enemies = getEnemiesInRange({ x: unit.x, y: unit.y }, range)
-                      .filter(e => e.owner !== unit.owner);
-    if (enemies.length > 0) {
-      // Если враги обнаружены, прерываем движение и переключаемся на атаку
-      unit.commandQueue = [];
-      const nearestEnemy = enemies.reduce((prev, curr) =>
-        Math.hypot(curr.x - unit.x, curr.y - unit.y) < Math.hypot(prev.x - unit.x, prev.y - unit.y)
-          ? curr : prev
-      );
-      unit.commandQueue.push({ type: "attack", target: nearestEnemy });
-      if (unit.currentMovementAnimation) {
-        cancelAnimationFrame(unit.currentMovementAnimation);
-        unit.currentMovementAnimation = null;
-      }
-      return;
-    }
-  }
-
-  // Обновляем позицию юнита
-  unit.x = startX + dx * progress;
-  unit.y = startY + dy * progress;
-
-  if (progress < 1) {
-    unit.currentMovementAnimation = requestAnimationFrame(animate);
-  } else {
-    unit.currentMovementAnimation = null;
-    if (callback) callback();
-  }
-}
-
-if (unit.currentMovementAnimation) {
-  cancelAnimationFrame(unit.currentMovementAnimation);
-  unit.currentMovementAnimation = null;
-}
-animate();
-
-}
 
 function updateUnits(deltaTime) {
   gameState.units.forEach(unit => {
@@ -753,10 +614,16 @@ function updateUnits(deltaTime) {
     if (unit.type === "elite" && unit.target && unit.health > 0) {
       dynamicAttackElite(unit, unit.target, deltaTime);
     }
-    // Если не элита в боевом режиме, обрабатываем команды, если они есть
-    else if (unit.commandQueue.length > 0) {
-      processCommandQueue(unit);
+	  if (unit.type === "assault" && unit.target && unit.health > 0) {
+      dynamicAttackAssault(unit, unit.target, deltaTime);
     }
+	  if (unit.type === "fighter" && unit.target && unit.health > 0) {
+      dynamicAttack(unit, unit.target, deltaTime);
+    }
+    // Если не элита в боевом режиме, обрабатываем команды, если они есть
+//    else if (unit.commandQueue.length > 0) {
+//      processCommandQueue(unit);
+//    }
     // Если команда пуста, выполняем idle-логику (для рабочих, ремонтников и пр.)
     else {
       unit.idleTimer += deltaTime;
