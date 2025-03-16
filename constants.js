@@ -8,7 +8,7 @@ const gameState = {
   bullets: [],
   particles: [],
   resourceTokens: [],	
-  playerResources: { gold: 20000, silicon: 30000, plasma: 15000 },
+  playerResources: { gold: 100, silicon: 100, plasma: 100 },
   aiResources: { gold: 200, silicon: 300, plasma: 150 },
 	// Новые массивы для оптимизации
   attackers: [],    // для всех боевых юнитов (fighter, assault, elite)
