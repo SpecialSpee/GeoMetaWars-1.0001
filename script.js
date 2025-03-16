@@ -1393,7 +1393,7 @@ function getRandomBasePosition(margin, minDistance, existingBase = null) {
 }
 
 const margin = 200;
-const minBaseDistance = 1000; // минимальное расстояние между базами
+const minBaseDistance = 2000; // минимальное расстояние между базами
 
 // Сначала генерируем позицию для базы игрока
 const playerPos = getRandomBasePosition(margin, minBaseDistance);
