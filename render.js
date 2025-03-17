@@ -316,32 +316,40 @@ btnSave.addEventListener("click", () => {
 // Обработчик кнопки "Загрузить" – загружаем gameState из localStorage
 btnLoad.addEventListener("click", () => {
   try {
+    // Загружаем сохранённое состояние игры
     const state = localStorage.getItem("savedGameState");
     if (state) {
       let loadedState = JSON.parse(state);
-      // Убираем данные тумана из сохраненного состояния, чтобы не перезатирать их
+      // Убираем данные тумана, если они есть
       delete loadedState.fogMap;
       delete loadedState.persistentFogMap;
       
+      // Восстанавливаем основное состояние игры
       Object.assign(gameState, loadedState);
       
-      // Явно очищаем глобальные переменные тумана перед переинициализацией
+      // Загружаем отдельно сохранённый счёт игрока
+      const savedScore = localStorage.getItem("playerScore");
+      if (savedScore !== null) {
+        gameState.playerScore = parseInt(savedScore, 10);
+        updateScoreUI();
+      }
+      
+      // Переинициализируем туман, если необходимо
       fogMap = [];
       persistentFogMap = [];
-      
-      // Переинициализируем туман полностью на основе текущих размеров и позиций
       initFogOfWar();
       updateFogOfWar();
       
       alert("Игра загружена!");
     } else {
-      alert("Нет сохраненных данных!");
+      alert("Нет сохранённых данных!");
     }
   } catch (e) {
     console.error("Ошибка загрузки:", e);
     alert("Ошибка загрузки!");
   }
 });
+
 
 
 // Обработчик кнопки "Выйти" – перезагружаем страницу
@@ -3203,6 +3211,7 @@ renderResourceTokens(); // Включаем отрисовку токенов
   ctx.restore();
 	
 	// Если нужно отобразить динамичный туман:
+	renderParticles();
   renderFogOfWar();
 	
 

@@ -1,8 +1,41 @@
+// Функция загрузки счёта игрока из localStorage
+function loadPlayerScore() {
+  const savedScore = localStorage.getItem("playerScore");
+  gameState.playerScore = savedScore !== null ? parseFloat(savedScore, 10) : 0;
+  updateScoreUI();
+}
+
+// Функция обновления интерфейса счёта (только изменяет отображаемое значение)
+function updateScoreUI() {
+  const scoreCounter = document.getElementById("scoreCounter");
+  scoreCounter.innerHTML = "GEO: " + gameState.playerScore;
+}
+
+// Функция сохранения счёта в localStorage
+function savePlayerScore() {
+  localStorage.setItem("playerScore", gameState.playerScore);
+}
+
+// Вызываем loadPlayerScore при загрузке страницы
+window.addEventListener("load", () => {
+  loadPlayerScore();
+  // Здесь можно выполнять и другие начальные настройки, например, скрывать loadingScreen
+});
+
+// Сохраняем счёт при закрытии страницы
+window.addEventListener("beforeunload", () => {
+  savePlayerScore();
+});
+
+
+
+
+
+
 function triggerSale(building) {
-  // Проверяем, что здание всё ещё существует
   if (!gameState.buildings.includes(building)) return;
   
-  // Если здание является турелью, останавливаем её цикл
+  // Если здание – турель, останавливаем цикл стрельбы
   if (building.type === "turret" || building.type === "turret2") {
     building.active = false;
     if (building.turretCycleId) {
@@ -14,7 +47,7 @@ function triggerSale(building) {
   // Удаляем здание из gameState
   gameState.buildings = gameState.buildings.filter(b => b !== building);
   
-  // Очищаем ссылки на здание у юнитов
+  // Обновляем ссылки у юнитов (если их цель – это здание)
   gameState.units.forEach(unit => {
     if (unit.target === building) {
       unit.target = null;
@@ -24,8 +57,10 @@ function triggerSale(building) {
     }
   });
   
-  // Запускаем эффект разрушения и возврат части ресурсов
+  // Запускаем эффект разрушения
   spawnDestructionFragments(building.x, building.y, building.width, building.height, building.type);
+  
+  // Возврат части ресурсов (refundPercent, например, 20%)
   const refundPercent = 0.2;
   const refundGold = building.buildCost.gold * refundPercent;
   const refundSilicon = building.buildCost.silicon * refundPercent;
@@ -34,14 +69,21 @@ function triggerSale(building) {
   gameState.playerResources.silicon += refundSilicon;
   gameState.playerResources.plasma += refundPlasma;
   updateResourceUI();
-  showWarning(`Здание продано! Возврат: Gold ${Math.round(refundGold)}, Silicon ${Math.round(refundSilicon)}, Plasma ${Math.round(refundPlasma)}`);
   
-  // Добавляем координаты проданного здания в soldBuildings
+  // Начисляем очки за продажу, если здание принадлежало ИИ
+  if (building.owner === "ai") {
+    const points = SCORE_VALUES[building.type] || 0;
+    gameState.playerScore += points;
+    updateScoreUI();
+  }
+  
+  // Дополнительно можно сохранить координаты проданного здания
   soldBuildings.push({ x: building.x, y: building.y });
   
-  // Обновляем квадродерево
+  // Обновляем квадродерево, если используется
   cleanUpBuildingReferences();
 }
+
 
 
 
@@ -339,17 +381,38 @@ function addUnit(unit) {
 
 // Функция удаления юнита
 function removeUnit(unit) {
+  // Создаем эффект разрушения и прочее (уже реализовано)
+  spawnDestructionFragments(unit.x, unit.y, unit.width || 10, unit.height || 10, unit.type);
+  
+  // Если это рабочий, ремонтник и т.д. – обновляем соответствующие счетчики
+  if (unit.type === "worker" && unit.homeWarehouse) {
+    unit.homeWarehouse.workers = Math.max(0, unit.homeWarehouse.workers - 1);
+  }
+  if (unit.type === "repairman" && unit.homeWorkshop) {
+    unit.homeWorkshop.repairman = Math.max(0, unit.homeWorkshop.repairman - 1);
+  }
+  // Если это боевой юнит и принадлежит ИИ, начисляем очки игроку
+  if (unit.owner === "ai") {
+    const points = SCORE_VALUES[unit.type] || 0;
+    gameState.playerScore += points;
+    updateScoreUI();
+  }
+  
+  // Удаляем юнита из gameState.units и связанных массивов
   gameState.units = gameState.units.filter(u => u !== unit);
-  if (unit.type === "fighter" || unit.type === "assault" || unit.type === "elite") {
-    gameState.attackers = gameState.attackers.filter(u => u !== unit);
-  }
-  if (unit.type === "repairman") {
-    gameState.repairmen = gameState.repairmen.filter(u => u !== unit);
-  }
-  if (unit.defending) {
-    gameState.defenders = gameState.defenders.filter(u => u !== unit);
-  }
 }
+//function removeUnit(unit) {
+//  gameState.units = gameState.units.filter(u => u !== unit);
+//  if (unit.type === "fighter" || unit.type === "assault" || unit.type === "elite") {
+//    gameState.attackers = gameState.attackers.filter(u => u !== unit);
+//  }
+//  if (unit.type === "repairman") {
+//    gameState.repairmen = gameState.repairmen.filter(u => u !== unit);
+//  }
+//  if (unit.defending) {
+//    gameState.defenders = gameState.defenders.filter(u => u !== unit);
+//  }
+//}
 
 class Quadtree {
   constructor(bounds, capacity = 4) {
@@ -492,7 +555,6 @@ function processLongTap(touch) {
 // Добавляем новое свойство для хранения фрагментов в состоянии игры:
 gameState.fragments = [];
 
-// Функция для генерации фрагментов при разрушении объекта (юнита или здания)
 // Функция для генерации фрагментов разрушения в виде нерегулярных многоугольников
 
 function spawnDestructionFragments(x, y, width, height, unitType) {
@@ -592,23 +654,6 @@ function drawFragments() {
 
 
 
-// В constants.js добавляем новые константы для расчёта влияния объектов:
-
-//// Вес для зданий
-//const BUILDING_INFLUENCE_WEIGHTS = {
-//  beacon: 3,           // Маяк – самый высокий вклад
-//  turret: 2.5,         // Турели (основные и улучшенные) – чуть ниже
-//  turret2: 2.5,
-//  warehouse: 1,        // Склады – базовый вес
-//  repairWorkshop: 1    // Мастерские ремонта – базовый вес
-//};
-//
-//// Вес для юнитов
-//const UNIT_INFLUENCE_WEIGHTS = {
-//  fighter: 0.5,        // Истребитель – небольшой вклад
-//  assault: 1,          // Штурмовик – средний вклад
-//  elite: 1.5           // Элита – самый высокий вклад среди юнитов
-//};
 
 // Если удобно, можно объединить в один объект:
 const INFLUENCE_WEIGHTS = {
@@ -1042,7 +1087,7 @@ function updateZoneControlUI() {
     document.body.appendChild(zoneControlCounter);
   }
   zoneControlCounter.innerHTML =
-    `Клеток: Игрок: ${playerCells} | ИИ: ${aiCells} | Нейтральных: ${neutralCells} (Всего: ${rows * cols})`;
+    `Zones: Human: ${playerCells} | ai: ${aiCells} | neutral: ${neutralCells} (all: ${rows * cols})`;
 }
 
 
@@ -1250,7 +1295,7 @@ function updateFogOfWar() {
 // Функция отрисовки динамичного тумана (на текущем участке)
 function renderFogOfWar() {
   ctx.save();
-  const cellScreenSize = FOG_CELL_SIZE * camera.scale;
+  const cellScreenSize = FOG_CELL_SIZE;
   for (let r = 0; r < fogMap.length; r++) {
     for (let c = 0; c < fogMap[r].length; c++) {
       if (fogMap[r][c] < 1) {
@@ -1277,7 +1322,7 @@ function renderPersistentFog() {
         const worldX = c * FOG_CELL_SIZE;
         const worldY = r * FOG_CELL_SIZE;
         const screenPos = worldToScreen(worldX, worldY);
-        ctx.fillStyle = "rgba(0,0,0,1)";
+        ctx.fillStyle = "rgba(0,0,0, 1)";
         ctx.fillRect(screenPos.x, screenPos.y, cellScreenSize, cellScreenSize);
       } else if (fogMap[r][c] < 1) {
         // Если ячейка была открыта ранее, но сейчас не видна – слегка затемняем
@@ -2232,6 +2277,12 @@ function generateResources() {
   });
 }
 generateResources();
+
+
+
+
+
+
 
 
 

@@ -138,3 +138,43 @@ function scheduleAIBuilding(type, x, y, delay = 2000) {
   });
 }
 
+
+function fortifyWarehousesProtection() {
+  const protectionRadius = 100; // Радиус проверки вокруг склада
+  // Минимальное число турелей в зоне склада
+  const desiredTurretCount = 2;
+
+  gameState.buildings.forEach(warehouse => {
+    if (warehouse.owner === "ai" && warehouse.type === "warehouse") {
+      const queryRange = {
+        x: warehouse.x - protectionRadius,
+        y: warehouse.y - protectionRadius,
+        width: protectionRadius * 2,
+        height: protectionRadius * 2
+      };
+
+      const nearbyBuildings = quadtree.query(queryRange);
+      // Подсчитываем количество турелей (turret) в зоне склада
+      const turretCount = nearbyBuildings.filter(b =>
+        b.owner === "ai" && b.type === "turret"
+      ).length;
+
+      // Если турелей меньше требуемого количества, планируем строительство недостающих
+      if (turretCount < desiredTurretCount) {
+        const missing = desiredTurretCount - turretCount;
+        for (let i = 0; i < missing; i++) {
+          // Распределяем немного случайное смещение для каждого строительства
+          const pos = randomNearbyPosition(warehouse, protectionRadius);
+          if (canAfford(TURRET_COST, "ai")) {
+            scheduleAIBuilding("turret", pos.x, pos.y, 0);
+          }
+        }
+      }
+    }
+  });
+}
+
+// Запускаем защиту складов каждые 20 секунд:
+setInterval(fortifyWarehousesProtection, 20000);
+
+

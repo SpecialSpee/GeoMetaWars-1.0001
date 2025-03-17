@@ -10,10 +10,31 @@ const gameState = {
   resourceTokens: [],	
   playerResources: { gold: 100, silicon: 100, plasma: 100 },
   aiResources: { gold: 200, silicon: 300, plasma: 150 },
+	playerScore: 0,
 	// Новые массивы для оптимизации
   attackers: [],    // для всех боевых юнитов (fighter, assault, elite)
   repairmen: [],    // для ремонтников
   defenders: []     // если нужно отдельно хранить юнитов, назначенных для защиты
+};
+
+const SCORE_VALUES = {
+  fighter: 0.1,
+  assault: 0.25,
+  elite: 0.5,
+	worker: 0.05,
+	repairman: 0.03,
+  warehouse: 0.1,
+  repairWorkshop: 0.19,
+  barracks: 0.7,
+	barracks2: 1.5,
+	barracks3: 2,
+  turret: 0.4,
+	turret2: 0.6,
+  beacon: 0.9,
+  base: 3,
+  base2: 6,
+  base3: 10,
+  wall:  0.05 // можно добавить и другие типы
 };
 
 const fragmentColors = {
@@ -51,7 +72,8 @@ const WALL_COST = { gold: 8, silicon: 4, plasma: 2 };
 
 
 // === Константы и глобальные переменные для тумана войны ===
-const FOG_CELL_SIZE = 45;      // размер ячейки тумана (в мировых единицах)
+const FOG_CELL_SIZE = 45;   // размер ячейки тумана (в мировых единицах)
+
 const VISION_RADIUS = 250;     // радиус видимости юнита игрока (в мировых единицах)
 
 

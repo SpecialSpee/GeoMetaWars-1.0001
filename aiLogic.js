@@ -528,38 +528,61 @@ function getBeaconBoundaries() {
 function aiBuildImprovedBuildings() {
   if (!hasBuilding("base2", "ai") && canAfford(BASE2_COST, "ai") && canBuild("base2")) {
     const pos = randomFarPosition(aiBase, 100);
-    if (aiPlaceBuilding("base2", pos.x, pos.y)) {
-      //console.log("Строится улучшенная база (base2) по координатам:", pos);
-    }
+    aiPlaceBuilding("base2", pos.x, pos.y);
   }
+  
   if (!hasBuilding("barracks2", "ai") && canAfford(BARRACKS2_COST, "ai") && canBuild("barracks2")) {
     const reference = getBuilding("base2", "ai") || aiBase;
     const pos = randomNearbyPosition(reference, 100);
-    if (aiPlaceBuilding("barracks2", pos.x, pos.y)) {
-      //console.log("Строится улучшенная казарма (barracks2) по координатам:", pos);
-    }
+    aiPlaceBuilding("barracks2", pos.x, pos.y);
   }
+  
+  // Обновлённая логика для turret2: вместо концентрации возле базы
+  // turret2 теперь размещаются рядом с инфраструктурными объектами, которым требуется дополнительная защита.
   if (hasBuilding("barracks2", "ai") && canAfford(TURRET2_COST, "ai") && canBuild("turret2")) {
-    const reference = getBuilding("base2", "ai") || aiBase;
-    const pos = randomNearbyPosition(reference, 100);
-    if (aiPlaceBuilding("turret2", pos.x, pos.y)) {
-      //console.log("Строится улучшенная турель (turret2) по координатам:", pos);
+    // Собираем кандидатов из важных инфраструктурных объектов
+    const candidateTypes = ["warehouse", "repairWorkshop", "barracks", "barracks2", "base2"];
+    const candidates = gameState.buildings.filter(b => b.owner === "ai" && candidateTypes.includes(b.type));
+    
+    let chosenCandidate = null;
+    // Для каждого кандидата с помощью квадродерева проверяем наличие turret2 в окрестности
+    for (let candidate of candidates) {
+      const queryRange = {
+        x: candidate.x - 150,
+        y: candidate.y - 150,
+        width: 300,
+        height: 300
+      };
+      const nearbyTurrets = quadtree.query(queryRange).filter(b =>
+        b.owner === "ai" && b.type === "turret2"
+      );
+      if (nearbyTurrets.length === 0) {
+        chosenCandidate = candidate;
+        break;
+      }
+    }
+    // Если ни один кандидат не подходит, выбираем случайного из списка
+    if (!chosenCandidate && candidates.length > 0) {
+      chosenCandidate = candidates[Math.floor(Math.random() * candidates.length)];
+    }
+    if (chosenCandidate) {
+      const pos = randomNearbyPosition(chosenCandidate, 100);
+      aiPlaceBuilding("turret2", pos.x, pos.y);
     }
   }
+  
   if (!hasBuilding("base3", "ai") && canAfford(BASE3_COST, "ai") && canBuild("base3")) {
     const pos = randomFarPosition(aiBase, 100);
-    if (aiPlaceBuilding("base3", pos.x, pos.y)) {
-      //console.log("Строится улучшенная база (base3) по координатам:", pos);
-    }
+    aiPlaceBuilding("base3", pos.x, pos.y);
   }
+  
   if (!hasBuilding("barracks3", "ai") && canAfford(BARRACKS3_COST, "ai") && canBuild("barracks3")) {
     const reference = getBuilding("base3", "ai") || aiBase;
     const pos = randomNearbyPosition(reference, 100);
-    if (aiPlaceBuilding("barracks3", pos.x, pos.y)) {
-      //console.log("Строится улучшенная казарма (barracks3) по координатам:", pos);
-    }
+    aiPlaceBuilding("barracks3", pos.x, pos.y);
   }
 }
+
 
 //////////////////////////////////////////////////////////////
 // Функция размещения здания для ИИ

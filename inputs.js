@@ -551,10 +551,18 @@ function hireWorkerForPlayer(warehouse) {
     showWarning("Недостаточно ресурсов для найма рабочего");
     return;
   }
+  // Здесь отсутствует проверка: если уже нанято 5 рабочих, больше не нанимать
+  // Добавим проверку:
+  if (warehouse.workers >= 5) {
+    showWarning("Достигнут лимит рабочих для склада");
+    return;
+  }
+  
   gameState.playerResources.gold -= WORKER_COST.gold;
   gameState.playerResources.silicon -= WORKER_COST.silicon;
   gameState.playerResources.plasma -= WORKER_COST.plasma;
   updateResourceUI();
+  
   warehouse.workers++;
   const { spawn, target } = spawnAtBoundary(warehouse, 10);
   const worker = new Unit("worker", "player", spawn.x, spawn.y);
@@ -562,6 +570,7 @@ function hireWorkerForPlayer(warehouse) {
   gameState.units.push(worker);
   moveUnit(worker, target.x, target.y, () => startWorkerCycle(worker, warehouse));
 }
+
 
 
 function hireFighterForPlayer(barracks) {
@@ -678,30 +687,8 @@ function enemyNear(building, radius) {
   return enemyFound;
 }
 // Вспомогательная функция для удаления юнита и корректировки счетчиков в зданиях
-function removeUnit(unit) {
-  const unitWidth = unit.width || 10;
-  const unitHeight = unit.height || 10;
-  // Создаем эффект разрушения
-  spawnDestructionFragments(unit.x, unit.y, unitWidth, unitHeight, unit.type);
- // console.log(`Юнит ${unit.type} уничтожен.`);
-  
-  // Если это рабочий, уменьшаем счётчик в homeWarehouse
-  if (unit.type === "worker" && unit.homeWarehouse) {
-    unit.homeWarehouse.workers = Math.max(0, unit.homeWarehouse.workers - 1);
-  }
-  
-  // Если это ремонтник, уменьшаем счётчик в мастерской
-  if (unit.type === "repairman" && unit.homeWorkshop) {
-    unit.homeWorkshop.repairman = Math.max(0, unit.homeWorkshop.repairman - 1);
-  }
-  // Если военный юнит – fighter, assault, elite – уменьшаем militaryCount в соответствующем здании
-  if ((unit.type === "fighter" || unit.type === "assault" || unit.type === "elite") && unit.homeBuilding) {
-    unit.homeBuilding.militaryCount = Math.max(0, unit.homeBuilding.militaryCount - 1);
-  }
-  
-  // Удаляем юнита из глобального массива
-  gameState.units = gameState.units.filter(u => u !== unit);
-}
+
+
   // Остальная логика удаления юнита из gameState.units (обычно через фильтрацию)
 
 function updateGameState(deltaTime) {
@@ -782,7 +769,7 @@ function gameLoop(time) {
   
   // Дополнительная отрисовка фрагментов и частиц
   drawFragments();
-  renderParticles();
+  
 	
 	 // Обновление UI: вывод счета зон контроля
   updateZoneControlUI();
