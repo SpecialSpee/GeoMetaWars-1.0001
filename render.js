@@ -1,5 +1,6 @@
 let gameLoopId;
 let isPaused = false;
+let lastPlayerAttackTime = performance.now(); 
 let lastTime = performance.now();
 let quadtree;
 // Объявляем переменные виртуального мира заранее
@@ -22,14 +23,15 @@ function screenToWorld(x, y) {
   return { x: (x - camera.offsetX) / camera.scale, y: (y - camera.offsetY) / camera.scale };
 }
 
-
-
-
-
-
+// Глобальный счетчик для уникальных идентификаторов зданий
+let buildingIdCounter = 0;
+function generateUniqueBuildingId() {
+  return 'building_' + buildingIdCounter++;
+}
 // Классы игровых объектов
 class Building {
   constructor(type, owner, x, y) {
+	  this.id = generateUniqueBuildingId(); // уникальный идентификатор для каждой казармы и другого здания
     this.type = type;
     this.owner = owner;
     this.x = x;
@@ -37,36 +39,47 @@ class Building {
     if (type === "warehouse") {
       this.width = 10; this.height = 10;
       this.workers = 0; this.health = 250; this.maxHealth = 250;
-    } else if (type === "barracks") {
+    } 
+	  else if (type === "barracks") {
       this.width = 15; this.height = 15;
       this.fighters = 0; this.health = 400; this.maxHealth = 400;
-    } else if (type === "barracks2") {
+		  this.productionQueue = []; this.productionLimit = 5; //массив и очередь на заказ юнитов
+    } 
+	  else if (type === "barracks2") {
       this.width = 25; this.height = 15;
       // Для казармы2 будем использовать её для найма штурмовиков
       this.fighters = 0; this.health = 550; this.maxHealth = 550;
-    } else if (type === "base") {
+		this.productionQueue = []; this.productionLimit = 5; //массив и очередь на заказ юнитов
+    } 
+	  else if (type === "base") {
       this.width = 20; this.height = 20;
       this.health = 1000; this.maxHealth = 1000;
-    } else if (type === "base2") {
+		this.productionQueue = []; this.productionLimit = 5; //массив и очередь на заказ юнитов
+    } 
+	  else if (type === "base2") {
       this.width = 25; this.height = 30;
       this.health = 1200; this.maxHealth = 1200;
-    } else if (type === "turret") {
+    } 
+	  else if (type === "turret") {
       this.width = 12; this.height = 12;
       this.health = 250; this.maxHealth = 250;
-      this.range = 250; this.fireRate = 120;
+      this.range = 190; this.fireRate = 170;
       this.lastFireTime = 0; this.angle = 0;
       this.target = null;
-    } else if (type === "turret2") {
+    } 
+	  else if (type === "turret2") {
       this.width = 15; this.height = 17;
       this.health = 350; this.maxHealth = 350;
       this.range = 500; this.fireRate = 3000;
       this.lastFireTime = 0; this.angle = 0;
       this.target = null;
-    } else if (type === "beacon") {
+    } 
+	  else if (type === "beacon") {
       this.width = 4; this.height = 17;
       this.health = 250; this.maxHealth = 250;
       this.buildZoneMultiplier = 2;
-    } else if (type === "repairWorkshop") {
+    } 
+	  else if (type === "repairWorkshop") {
       this.width = 10; this.height = 10;
       this.health = 300; this.maxHealth = 300;
       this.capacity = 5;
@@ -77,12 +90,16 @@ class Building {
     else if (type === "base3") {
       this.width = 30; this.height = 30;
       this.health = 1500; this.maxHealth = 1500;
-    } else if (type === "barracks3") {
+    } 
+	  else if (type === "barracks3") {
       this.width = 20; this.height = 15;
       this.fighters = 0; this.health = 80; this.maxHealth = 80;
-    } else if (type === "wall") {
+		this.productionQueue = []; this.productionLimit = 5; //массив и очередь на заказ юнитов
+    }
+	  else if (type === "wall") {
       this.width = 3; this.height = 5;
       this.health = 400; this.maxHealth = 400;
+		this.productionQueue = []; this.productionLimit = 5; //массив и очередь на заказ юнитов
     }
 	  // Добавляем стоимость здания:
     switch (type) {
@@ -184,8 +201,8 @@ class Unit {
       this.lastArtilleryAttack = 0;
       this.lastLaserAttack = 0;
       this.meleeCooldown = 1000;
-      this.artilleryCooldown = 3000;
-      this.laserCooldown = 8000;
+      this.artilleryCooldown = 10000;
+      this.laserCooldown = 5000;
     }
 
   }
@@ -227,11 +244,13 @@ window.addEventListener("load", () => {
     const loadingScreen = document.getElementById("loadingScreen");
     if (loadingScreen) loadingScreen.style.display = "none";
     
+	   gameStarted = true; // Игра запущена
     // Запускаем игровой цикл и ИИ
     isPaused = false;
     lastTime = performance.now();
     gameLoopId = requestAnimationFrame(gameLoop);
-    aiLogicInterval = setInterval(aiLogic, 1000);
+	  initAILogic();
+    aiLogicInterval = setInterval(aiLogic, 25000);
   });
 });
 // ========================
@@ -3146,7 +3165,12 @@ ctx.restore();
     if (selectedUnits.includes(unit)) drawCircularHP(unit.x, unit.y, 10, unit.health, unit.maxHealth);
   });
 	
-	
+	gameState.buildings.forEach(building => {
+  if (["barracks", "barracks2", "barracks3"].includes(building.type)) {
+    updateProductionIndicator(building);
+  }
+});
+
   
   // Отрисовка ресурсов
   gameState.resources.forEach(resource => {
@@ -3210,9 +3234,7 @@ renderResourceTokens(); // Включаем отрисовку токенов
 	renderInfluenceOverlay(); 
   ctx.restore();
 	
-	// Если нужно отобразить динамичный туман:
-	renderParticles();
-  renderFogOfWar();
+
 	
 
   // Если нужно отобразить постоянный туман:

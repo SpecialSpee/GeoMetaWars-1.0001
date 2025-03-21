@@ -28,10 +28,6 @@ window.addEventListener("beforeunload", () => {
 });
 
 
-
-
-
-
 function triggerSale(building) {
   if (!gameState.buildings.includes(building)) return;
   
@@ -85,8 +81,6 @@ function triggerSale(building) {
 }
 
 
-
-
 // Функция для обновления квадродерева (и других структур, если необходимо)
 function cleanUpBuildingReferences() {
   if (typeof quadtree !== 'undefined' && quadtree !== null) {
@@ -133,7 +127,7 @@ function checkAndSellUnprofitableBuildings() {
         gameState.aiResources.plasma < 50
       );
       if (nearbyRepairmen.length === 0 || resourcesLow) {
-        console.log("ИИ инициирует продажу здания:", building.type);
+        //console.log("ИИ инициирует продажу здания:", building.type);
         queueSale(building);
       }
     }
@@ -381,38 +375,27 @@ function addUnit(unit) {
 
 // Функция удаления юнита
 function removeUnit(unit) {
-  // Создаем эффект разрушения и прочее (уже реализовано)
   spawnDestructionFragments(unit.x, unit.y, unit.width || 10, unit.height || 10, unit.type);
-  
-  // Если это рабочий, ремонтник и т.д. – обновляем соответствующие счетчики
+
   if (unit.type === "worker" && unit.homeWarehouse) {
     unit.homeWarehouse.workers = Math.max(0, unit.homeWarehouse.workers - 1);
   }
   if (unit.type === "repairman" && unit.homeWorkshop) {
     unit.homeWorkshop.repairman = Math.max(0, unit.homeWorkshop.repairman - 1);
   }
-  // Если это боевой юнит и принадлежит ИИ, начисляем очки игроку
+
   if (unit.owner === "ai") {
     const points = SCORE_VALUES[unit.type] || 0;
     gameState.playerScore += points;
     updateScoreUI();
   }
-  
-  // Удаляем юнита из gameState.units и связанных массивов
+
   gameState.units = gameState.units.filter(u => u !== unit);
+  gameState.attackers = gameState.attackers.filter(u => u !== unit);
+  gameState.defenders = gameState.defenders.filter(u => u !== unit);
+  gameState.repairmen = gameState.repairmen.filter(u => u !== unit);
 }
-//function removeUnit(unit) {
-//  gameState.units = gameState.units.filter(u => u !== unit);
-//  if (unit.type === "fighter" || unit.type === "assault" || unit.type === "elite") {
-//    gameState.attackers = gameState.attackers.filter(u => u !== unit);
-//  }
-//  if (unit.type === "repairman") {
-//    gameState.repairmen = gameState.repairmen.filter(u => u !== unit);
-//  }
-//  if (unit.defending) {
-//    gameState.defenders = gameState.defenders.filter(u => u !== unit);
-//  }
-//}
+
 
 class Quadtree {
   constructor(bounds, capacity = 4) {
@@ -1160,7 +1143,7 @@ function aiUpdateZoneStrategy() {
     if (canAfford(TURRET_COST, "ai")) {
       const built = aiPlaceBuilding("turret", targetZone.center.x, targetZone.center.y);
       if (built) {
-        console.log(`ИИ строит турель для захвата уязвимой зоны в (${targetZone.center.x}, ${targetZone.center.y})`);
+        //console.log(`ИИ строит турель для захвата уязвимой зоны в (${targetZone.center.x}, ${targetZone.center.y})`);
       }
     }
   }
@@ -1173,7 +1156,7 @@ function aiUpdateZoneStrategy() {
     const nearestBase = findNearestAIBuilding(safeZone.center.x, safeZone.center.y);
     if (nearestBase && canAfford(FIGHTER_COST, "ai")) {
       aiHireMilitaryUnits("fighter", nearestBase);
-      console.log(`ИИ усиливает защиту в зоне (${safeZone.center.x}, ${safeZone.center.y})`);
+      //console.log(`ИИ усиливает защиту в зоне (${safeZone.center.x}, ${safeZone.center.y})`);
     }
   }
 }
@@ -1322,7 +1305,7 @@ function renderPersistentFog() {
         const worldX = c * FOG_CELL_SIZE;
         const worldY = r * FOG_CELL_SIZE;
         const screenPos = worldToScreen(worldX, worldY);
-        ctx.fillStyle = "rgba(0,0,0, 1)";
+        ctx.fillStyle = "rgba(0,0,0, 0.1)";
         ctx.fillRect(screenPos.x, screenPos.y, cellScreenSize, cellScreenSize);
       } else if (fogMap[r][c] < 1) {
         // Если ячейка была открыта ранее, но сейчас не видна – слегка затемняем
@@ -1502,7 +1485,7 @@ const selectedImage = backgroundImages[randomIndex];
 const backgroundImage = new Image();
 backgroundImage.src = selectedImage;
 backgroundImage.onload = () => {
-  console.log('Фоновая картинка загружена:', selectedImage);
+  //console.log('Фоновая картинка загружена:', selectedImage);
   
   // Пример установки фона для body
   document.body.style.backgroundImage = `url(${selectedImage})`;
@@ -2106,7 +2089,7 @@ function showSingleBuildZone(building, buildingType) {
         // Для простоты выводим отладочную информацию в консоль
         const dx = e.clientX - wallDragStart.x;
         const dy = e.clientY - wallDragStart.y;
-        console.log("Перетаскивание стены: dx =", dx, "dy =", dy);
+        //console.log("Перетаскивание стены: dx =", dx, "dy =", dy);
       }
     });
     zone.addEventListener("mouseup", e => {
@@ -2121,7 +2104,7 @@ function showSingleBuildZone(building, buildingType) {
       angle = Math.round(angle / (Math.PI / 2)) * (Math.PI / 2);
       // Определяем позицию строительства по точке отпускания мыши
       const worldPos = screenToWorld(e.clientX, e.clientY);
-      console.log("Стена будет построена с ориентацией:", angle * 180 / Math.PI, "°");
+      //console.log("Стена будет построена с ориентацией:", angle * 180 / Math.PI, "°");
       // Вызываем функцию установки стены с указанной ориентацией
       placeBuildingWithOrientation(worldPos.x, worldPos.y, buildingType, angle, "player");
       clearBuildZones();
@@ -2141,12 +2124,12 @@ function showSingleBuildZone(building, buildingType) {
   zone.addEventListener("click", e => {
     e.stopPropagation();
     const worldPos = screenToWorld(e.clientX, e.clientY);
-    console.log("Клик по зоне, строим", buildingType, "в", worldPos);
+    //console.log("Клик по зоне, строим", buildingType, "в", worldPos);
     placeBuilding(worldPos.x, worldPos.y, buildingType, "player");
     clearBuildZones();
   });
   document.body.appendChild(zone);
-  console.log("Зона для здания", building.type, "с опцией", buildingType, "создана. Экранные координаты:", screenPos);
+  //console.log("Зона для здания", building.type, "с опцией", buildingType, "создана. Экранные координаты:", screenPos);
 }
 // Функция для удаления временных DOM-элементов (build zones, меню, рамки выделения)
 function clearBuildZones() {

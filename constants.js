@@ -8,8 +8,8 @@ const gameState = {
   bullets: [],
   particles: [],
   resourceTokens: [],	
-  playerResources: { gold: 100, silicon: 100, plasma: 100 },
-  aiResources: { gold: 200, silicon: 300, plasma: 150 },
+  playerResources: { gold: 220, silicon: 300, plasma: 180 },
+  aiResources: { gold: 220, silicon: 300, plasma: 180 },
 	playerScore: 0,
 	// Новые массивы для оптимизации
   attackers: [],    // для всех боевых юнитов (fighter, assault, elite)
@@ -182,7 +182,7 @@ function attemptToBuildWarehouse() {
     const pos = findOptimalWarehousePosition();
     if (pos && canAfford(WAREHOUSE_COST, "ai")) {
       if (aiPlaceBuilding("warehouse", pos.x, pos.y)) {
-        console.log("AI построил склад в оптимальной позиции", pos);
+        //console.log("AI построил склад в оптимальной позиции", pos);
       }
     }
   }

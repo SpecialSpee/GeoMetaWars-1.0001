@@ -147,7 +147,7 @@ function processResourceDepletion() {
   gameState.resources.slice().forEach(resource => {
     //console.log("Ресурс:", resource.type, "amount:", resource.amount, "depleted:", resource.depleted);
     if (resource.amount <= 10 && !resource.depleted) {
-      console.log("Запускается суперновая для ресурса:", resource);
+      //console.log("Запускается суперновая для ресурса:", resource);
       resource.depleted = true;
       spawnSupernovaEffect(resource);
       setTimeout(() => {
@@ -241,9 +241,6 @@ function drawFragments() {
   ctx.restore();
 }
 
-
-
-
 function spawnSupernovaEffect(resource) {
   //console.log("Запущен эффект суперновой для ресурса:", resource);
   const effect = {
@@ -307,12 +304,6 @@ function renderSupernovaEffects() {
   });
 }
 
-
-
-
-
-
-
 // ==============================================
 // Обработчики для установки стены (build zone) – МЫШЬ
 function wallDragStartHandler(e) {
@@ -326,7 +317,7 @@ function wallDragMoveHandler(e) {
   if (!isWallDragging) return;
   const dx = e.clientX - wallDragStart.x;
   const dy = e.clientY - wallDragStart.y;
-  console.log("Перетаскивание стены (mouse): dx =", dx, "dy =", dy);
+  //console.log("Перетаскивание стены (mouse): dx =", dx, "dy =", dy);
 }
 function wallDragEndHandler(e) {
   e.preventDefault();
@@ -338,7 +329,7 @@ function wallDragEndHandler(e) {
   if (angle < 0) angle += 2 * Math.PI;
   angle = Math.round(angle / (Math.PI / 2)) * (Math.PI / 2);
   const worldPos = screenToWorld(e.clientX, e.clientY);
-  console.log("Стена будет построена с углом (mouse):", angle * 180 / Math.PI, "°");
+  //console.log("Стена будет построена с углом (mouse):", angle * 180 / Math.PI, "°");
   placeBuildingWithOrientation(worldPos.x, worldPos.y, "wall", angle, "player");
   clearBuildZones();
   isWallDragging = false;
@@ -363,7 +354,7 @@ function wallTouchMoveHandler(e) {
   const touch = e.touches[0];
   const dx = touch.clientX - wallDragStart.x;
   const dy = touch.clientY - wallDragStart.y;
-  console.log("Перетаскивание стены (touch): dx =", dx, "dy =", dy);
+  //console.log("Перетаскивание стены (touch): dx =", dx, "dy =", dy);
 }
 function wallTouchEndHandler(e) {
   e.preventDefault();
@@ -376,7 +367,7 @@ function wallTouchEndHandler(e) {
   if (angle < 0) angle += 2 * Math.PI;
   angle = Math.round(angle / (Math.PI / 2)) * (Math.PI / 2);
   const worldPos = screenToWorld(touch.clientX, touch.clientY);
-  console.log("Стена будет построена с углом (touch):", angle * 180 / Math.PI, "°");
+  //console.log("Стена будет построена с углом (touch):", angle * 180 / Math.PI, "°");
   placeBuildingWithOrientation(worldPos.x, worldPos.y, "wall", angle, "player");
   clearBuildZones();
   isWallDragging = false;
@@ -571,46 +562,251 @@ function hireWorkerForPlayer(warehouse) {
   moveUnit(worker, target.x, target.y, () => startWorkerCycle(worker, warehouse));
 }
 
+         
 
 
+
+
+
+
+// Функция для найма истребителя из обычных barracks
 function hireFighterForPlayer(barracks) {
+  if (!barracks.productionQueue) {
+    barracks.productionQueue = [];
+  }
+
   if (gameState.playerResources.gold < FIGHTER_COST.gold ||
       gameState.playerResources.silicon < FIGHTER_COST.silicon ||
       gameState.playerResources.plasma < FIGHTER_COST.plasma) {
     showWarning("Недостаточно ресурсов для найма истребителя");
     return;
   }
+
+  if (barracks.productionQueue.length >= barracks.productionLimit) {
+    showWarning("Очередь производства заполнена.");
+    return;
+  }
+
+  // Вычитаем ресурсы
   gameState.playerResources.gold -= FIGHTER_COST.gold;
   gameState.playerResources.silicon -= FIGHTER_COST.silicon;
   gameState.playerResources.plasma -= FIGHTER_COST.plasma;
   updateResourceUI();
-  barracks.fighters = (barracks.fighters || 0) + 1;
-  const { spawn, target } = spawnAtBoundary(barracks, 10);
-  const fighter = new Unit("fighter", "player", spawn.x, spawn.y);
-  gameState.units.push(fighter);
-  moveUnit(fighter, target.x, target.y, () => startFighterCycle(fighter));
+
+  // Время производства
+  const productionTime = 6000; // 3 секунды
+  const lastOrder = barracks.productionQueue[barracks.productionQueue.length - 1];
+
+  // ✅ Делаем очередь "цепочкой", а не одновременно
+  let timeStart = performance.now();
+  if (lastOrder) {
+    timeStart = lastOrder.timeStart + lastOrder.productionTime; // Следующий заказ начнётся после предыдущего
+  }
+
+  const order = {
+    unitType: "fighter",
+    timeStart: timeStart,
+    productionTime: productionTime
+  };
+
+  barracks.productionQueue.push(order);
 }
 
 
+// Функция для найма штурмовика из barracks2
+function hireAssaultForPlayer(barracks2) {
+  const ASSAULT_COST = { gold: 23, silicon: 26, plasma: 12 };
+
+  if (!barracks2.productionQueue) {
+    barracks2.productionQueue = [];
+  }
+
+  if (gameState.playerResources.gold < ASSAULT_COST.gold ||
+      gameState.playerResources.silicon < ASSAULT_COST.silicon ||
+      gameState.playerResources.plasma < ASSAULT_COST.plasma) {
+    showWarning("Недостаточно ресурсов для найма штурмовика");
+    return;
+  }
+
+  if (barracks2.productionQueue.length >= barracks2.productionLimit) {
+    showWarning("Очередь производства заполнена.");
+    return;
+  }
+
+  // Списание ресурсов
+  gameState.playerResources.gold -= ASSAULT_COST.gold;
+  gameState.playerResources.silicon -= ASSAULT_COST.silicon;
+  gameState.playerResources.plasma -= ASSAULT_COST.plasma;
+  updateResourceUI();
+
+  barracks2.fighters = (barracks2.fighters || 0) + 1;
+
+  // Время производства для штурмовика (4000 мс)
+  const productionTime = 12000;
+  let timeStart = performance.now();
+  const lastOrder = barracks2.productionQueue[barracks2.productionQueue.length - 1];
+  if (lastOrder) {
+    // Новый заказ начнётся после завершения предыдущего
+    timeStart = lastOrder.timeStart + lastOrder.productionTime;
+  }
+
+  const order = {
+    unitType: "assault",
+    timeStart: timeStart,
+    productionTime: productionTime
+  };
+
+  barracks2.productionQueue.push(order);
+}
+
+
+// Функция для найма элитного юнита из barracks3
 function hireEliteForPlayer(barracks3) {
-  // Используем фиксированные константы из constants.js:
   const ELITE_COST = { gold: 58, silicon: 73, plasma: 36 };
+
+  if (!barracks3.productionQueue) {
+    barracks3.productionQueue = [];
+  }
+
   if (gameState.playerResources.gold < ELITE_COST.gold ||
       gameState.playerResources.silicon < ELITE_COST.silicon ||
       gameState.playerResources.plasma < ELITE_COST.plasma) {
     showWarning("Недостаточно ресурсов для найма элитного юнита");
     return;
   }
+
+  if (barracks3.productionQueue.length >= barracks3.productionLimit) {
+    showWarning("Очередь производства заполнена.");
+    return;
+  }
+
+  // Списание ресурсов
   gameState.playerResources.gold -= ELITE_COST.gold;
   gameState.playerResources.silicon -= ELITE_COST.silicon;
   gameState.playerResources.plasma -= ELITE_COST.plasma;
   updateResourceUI();
+
   barracks3.fighters = (barracks3.fighters || 0) + 1;
-  const { spawn, target } = spawnAtBoundary(barracks3, 10);
-  const elite = new Unit("elite", "player", spawn.x, spawn.y);
-  gameState.units.push(elite);
-  moveUnit(elite, target.x, target.y, () => startFighterCycle(elite));
+
+  // Время производства для элитного юнита (5000 мс)
+  const productionTime = 25000;
+  let timeStart = performance.now();
+  const lastOrder = barracks3.productionQueue[barracks3.productionQueue.length - 1];
+  if (lastOrder) {
+    // Новый заказ начнётся после завершения предыдущего
+    timeStart = lastOrder.timeStart + lastOrder.productionTime;
+  }
+
+  const order = {
+    unitType: "elite",
+    timeStart: timeStart,
+    productionTime: productionTime
+  };
+
+  barracks3.productionQueue.push(order);
 }
+
+
+function processProductionQueue(building) {
+  if (!building || !building.productionQueue || building.productionQueue.length === 0) return;
+
+  const now = performance.now();
+  const order = building.productionQueue[0]; // Всегда берём только первый заказ из очереди
+  const elapsed = now - order.timeStart;
+
+  if (elapsed >= order.productionTime) {
+    const { spawn, target } = spawnAtBoundary(building, 10);
+    const unit = new Unit(order.unitType, "player", spawn.x, spawn.y);
+    gameState.units.push(unit);
+    moveUnit(unit, target.x, target.y, () => startFighterCycle(unit));
+
+    building.productionQueue.shift(); // Убираем выполненный заказ
+
+    // ✅ ВАЖНОЕ ДОПОЛНЕНИЕ:
+    // Пересчитываем время старта для всех оставшихся заказов:
+    if (building.productionQueue.length > 0) {
+      building.productionQueue[0].timeStart = now; // Ставим время старта следующего заказа на текущее время
+      for (let i = 1; i < building.productionQueue.length; i++) {
+        const prevOrder = building.productionQueue[i - 1];
+        building.productionQueue[i].timeStart = prevOrder.timeStart + prevOrder.productionTime;
+      }
+    }
+  }
+}
+
+
+
+
+// Обновлённая функция для обновления индикатора производства для каждого здания
+function updateProductionIndicator(building) {
+  let container = document.getElementById("productionIndicator_" + building.id);
+  
+  if (!container) {
+    container = document.createElement("div");
+    container.id = "productionIndicator_" + building.id;
+    container.className = "production-indicator";
+    
+    // ✅ Вместо document.body теперь добавляем в игровой контейнер
+    const gameContainer = document.getElementById("gameContainer") || document.body;
+    gameContainer.appendChild(container);
+  }
+
+  // Получаем экранные координаты здания с учётом зума и смещения камеры
+  const screenPos = worldToScreen(building.x, building.y);
+
+  // ✅ ПРАВИЛЬНОЕ ПОЗИЦИОНИРОВАНИЕ (на уровне зданий, не выше)
+  container.style.left = (screenPos.x - (building.width * camera.scale) / 2) + "px";
+  container.style.top = (screenPos.y + (building.height * camera.scale) - 10) + "px"; // Смещаем чуть ниже
+
+  // ✅ Если здание в тумане, скрываем индикатор
+  if (isInFogOfWar(building.x, building.y)) {
+    container.style.display = "none";
+  } else {
+    container.style.display = "block";
+  }
+
+  // Очищаем содержимое индикатора перед обновлением
+  container.innerHTML = "";
+
+  // Для каждого заказа в очереди создаём отдельную секцию с прогресс-баром
+  const now = performance.now();
+  building.productionQueue.forEach((order) => {
+    const section = document.createElement("div");
+    section.className = "production-section";
+    section.style.width = (5 * camera.scale) + "px";
+    section.style.height = (2 * camera.scale) + "px";
+
+    const fill = document.createElement("div");
+    fill.className = "production-fill";
+
+    // Вычисляем прогресс заказа от 0 до 1
+    const elapsed = now - order.timeStart;
+    const progress = Math.min(elapsed / order.productionTime, 1);
+    fill.style.width = (progress * 100) + "%";
+
+    section.appendChild(fill);
+    container.appendChild(section);
+  });
+}
+
+// Функция проверки, находится ли здание в тумане
+function isInFogOfWar(x, y) {
+  const cellX = Math.floor(x / FOG_CELL_SIZE);
+  const cellY = Math.floor(y / FOG_CELL_SIZE);
+  return fogMap[cellY] && fogMap[cellY][cellX] === 0; // 0 = скрыто
+}
+
+
+
+
+
+// Пример вызова в игровом цикле (например, в функции render или update):
+
+
+
+
+
+
 // Функция найма ремонтника для игрока
 function hireRepairmanForPlayer(workshop) {
   if (workshop.repairman >= workshop.capacity) {
@@ -633,27 +829,6 @@ function hireRepairmanForPlayer(workshop) {
   repairman.homeWorkshop = workshop;
   gameState.units.push(repairman);
   moveUnit(repairman, target.x, target.y, () => { /* дальнейшие действия */ });
-}
-
-// Новая функция для найма штурмовика из казармы2
-function hireAssaultForPlayer(barracks2) {
-  const ASSAULT_COST = { gold: 23, silicon: 26, plasma: 12 };
-  if (gameState.playerResources.gold < ASSAULT_COST.gold ||
-      gameState.playerResources.silicon < ASSAULT_COST.silicon ||
-      gameState.playerResources.plasma < ASSAULT_COST.plasma) {
-    showWarning("Недостаточно ресурсов для найма штурмовика");
-    return;
-  }
-  gameState.playerResources.gold -= ASSAULT_COST.gold;
-  gameState.playerResources.silicon -= ASSAULT_COST.silicon;
-  gameState.playerResources.plasma -= ASSAULT_COST.plasma;
-  updateResourceUI();
-  barracks2.fighters = (barracks2.fighters || 0) + 1;
-  const { spawn, target } = spawnAtBoundary(barracks2, 10);
-  const assault = new Unit("assault", "player", spawn.x, spawn.y);
-  assault.lastRocketTime = performance.now();
-  gameState.units.push(assault);
-  moveUnit(assault, target.x, target.y, () => startFighterCycle(assault));
 }
 
 function commandUnitsToAttack(owner, target) {
@@ -688,7 +863,38 @@ function enemyNear(building, radius) {
 }
 // Вспомогательная функция для удаления юнита и корректировки счетчиков в зданиях
 
-
+// Функция обновления очередей производства для зданий ИИ, вызываемая из основного игрового цикла
+function updateAIProductionQueues() {
+  const now = performance.now();
+  
+  // Проходим по всем зданиям ИИ, которые имеют очередь производства (казармы)
+  gameState.buildings.forEach(building => {
+    if (building.owner === "ai" && building.productionQueue && building.productionQueue.length > 0) {
+      // Обрабатываем заказы по цепочке – запускаем один заказ за раз для каждого здания
+      for (let i = 0; i < building.productionQueue.length; i++) {
+        const order = building.productionQueue[i];
+        if (now - order.timeStart >= order.productionTime) {
+          // Получаем координаты спавна и цели для юнита, основываясь на расположении здания
+          const { spawn, target } = spawnAtBoundary(building, 10);
+          // Создаем юнит нужного типа для ИИ
+          const unit = new Unit(order.unitType, "ai", spawn.x, spawn.y);
+          unit.homeBuilding = building;
+          addUnit(unit);
+          
+          // Запускаем соответствующий цикл для юнита
+          if (order.unitType === "fighter") {
+            moveUnit(unit, target.x, target.y, () => startFighterCycle(unit));
+          } else if (order.unitType === "assault" || order.unitType === "elite") {
+            moveUnit(unit, target.x, target.y, () => startAssaultEliteCycle(unit));
+          }
+          // Удаляем выполненный заказ и выходим, чтобы не обрабатывать несколько заказов за один кадр
+          building.productionQueue.splice(i, 1);
+          break;
+        }
+      }
+    }
+  });
+}
   // Остальная логика удаления юнита из gameState.units (обычно через фильтрацию)
 
 function updateGameState(deltaTime) {
@@ -729,6 +935,10 @@ function gameLoop(time) {
   updateFragments(deltaTime);
   updateParticles(deltaTime);
   updateFogOfWar();
+	
+	  
+  // Вместо отдельного таймера для AI-производства вызываем обновление очередей производства
+  updateAIProductionQueues();
   
   // Перестройка квадродерева с актуальными позициями
   quadtree.clear();
@@ -747,7 +957,24 @@ function gameLoop(time) {
       updateTurret(building);
     }
   });
+	
+	
+	
+	
   
+	// Пример: проверяем очереди для всех казарм игрока
+gameState.buildings.forEach(building => {
+  if (building.type === "barracks" ||
+      building.type === "barracks2" ||
+      building.type === "barracks3") {
+    processProductionQueue(building);
+  }
+});
+	
+	
+	
+	
+
   // Удаление зданий с нулевым здоровьем
   gameState.buildings = gameState.buildings.filter(b => b.health > 0);
   
@@ -776,7 +1003,9 @@ function gameLoop(time) {
   
   // Обновление логики ИИ с учётом зон влияния:
   aiUpdateZoneStrategy();
-	
+		// Если нужно отобразить динамичный туман:
+	renderParticles();
+  renderFogOfWar();
 	  // Отдельно обновляем и отрисовываем эффекты суперновой
   updateSupernovaEffects(deltaTime);
   renderSupernovaEffects();
@@ -1037,7 +1266,7 @@ function showBuildingMenu(building) {
     });
   });
   document.body.appendChild(menu);
-  console.log("Зона для здания", building.type, "создана. Экранные координаты:", screenPos);
+  //console.log("Зона для здания", building.type, "создана. Экранные координаты:", screenPos);
 }
 
 
@@ -1064,7 +1293,7 @@ function placeBuildingWithOrientation(x, y, buildingType, angle, owner) {
   const building = new Building(buildingType, owner, x, y);
   building.angle = angle; // сохраняем ориентацию
   gameState.buildings.push(building);
-  console.log(`Стена построена с углом ${angle * 180 / Math.PI}°`);
+ // console.log(`Стена построена с углом ${angle * 180 / Math.PI}°`);
 }
 //ЛОГИКА КЛИКОВ В МЕНЮ ПОСТРОЙКИ
 function showSingleBuildZone(building, buildingType) {
@@ -1103,7 +1332,7 @@ function showSingleBuildZone(building, buildingType) {
       if (isWallDragging && currentWallDragZone) {
         const dx = e.clientX - wallDragStart.x;
         const dy = e.clientY - wallDragStart.y;
-        console.log("Перетаскивание стены: dx =", dx, "dy =", dy);
+        //console.log("Перетаскивание стены: dx =", dx, "dy =", dy);
       }
     });
     zone.addEventListener("mouseup", e => {
@@ -1118,7 +1347,7 @@ function showSingleBuildZone(building, buildingType) {
       // Округляем до ближайшего кратного 90° (π/2)
       angle = Math.round(angle / (Math.PI / 2)) * (Math.PI / 2);
       const worldPos = screenToWorld(e.clientX, e.clientY);
-      console.log("Стена будет построена с ориентацией:", angle * 180 / Math.PI, "°");
+      //console.log("Стена будет построена с ориентацией:", angle * 180 / Math.PI, "°");
       placeBuildingWithOrientation(worldPos.x, worldPos.y, buildingType, angle, "player");
       clearBuildZones();
       isWallDragging = false;
@@ -1136,14 +1365,14 @@ function showSingleBuildZone(building, buildingType) {
       e.preventDefault();
       e.stopPropagation();
       const worldPos = screenToWorld(e.clientX, e.clientY);
-      console.log("Клик по зоне, строим", buildingType, "в", worldPos);
+     // console.log("Клик по зоне, строим", buildingType, "в", worldPos);
       placeBuilding(worldPos.x, worldPos.y, buildingType, "player");
       clearBuildZones();
     });
   }
   
   document.body.appendChild(zone);
-  console.log("Зона для здания", building.type, "с опцией", buildingType, "создана. Экранные координаты:", screenPos);
+  //console.log("Зона для здания", building.type, "с опцией", buildingType, "создана. Экранные координаты:", screenPos);
 }
 
 function placeBuilding(x, y, buildingType, owner) {
@@ -1237,7 +1466,7 @@ function placeBuilding(x, y, buildingType, owner) {
   building.height = dims.height;
   gameState.buildings.push(building);
   
-  console.log(`Здание ${buildingType} построено ${owner} в координатах:`, { x, y });
+  //console.log(`Здание ${buildingType} построено ${owner} в координатах:`, { x, y });
   
   // Если игрок строит турель, можно также запустить цикл автоматической стрельбы:
   if ((buildingType === "turret" || buildingType === "turret2") && owner === "player") {
