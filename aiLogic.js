@@ -1,16 +1,4 @@
-// aiLogic.js
-// Итоговый файл для AI с системой зависимостей, экспансией по ресурсным кластерам,
-// восстановлением базовой инфраструктуры через state machine, мгновенной реакцией на урон
-// и мобильной обороной (включая укрепление стен).
-//
-// Предполагается, что глобальные переменные и функции уже определены:
-// gameState, aiBase, playerBase, canAfford, randomFarPosition, randomNearbyPosition, hasBuilding,
-// getBuilding, buildSpatialIndex, evaluateResourceDensity, isPositionInAnyBuildZone, rectsOverlap,
-// updateResourceUI, attemptToHireWorkers, attemptToHireRepairman, attemptToHireMilitaryUnits,
-// spawnAtBoundary, moveUnit, startWorkerCycle, startRepairCycle, startTurretCycle,
-// dynamicAttack, dynamicAttackAssault, dynamicAttackElite, startRepairProcess, getEnemiesInRange,
-// а также константы: GRID_SIZE, RESOURCE_CLUSTER_RADIUS, DEFENSE_RADIUS, DESIRED_DEFENDERS_PER_BUILDING,
-// MIN_GARRISON_COUNT. Константы GREY_ZONE_RADIUS и ENEMY_ACTIVITY_THRESHOLD определяются в другом файле.
+
 let gameStarted = false;
 let soldBuildings = [];
 function hasBuilding(buildingType, owner) {
@@ -2019,12 +2007,41 @@ function hasBuildingNearby(buildingType, x, y, radius, owner) {
 
 // Пример: при уничтожении здания (или продаже) вызываем функцию для маркировки зоны
 function onBuildingDestroyed(building) {
-  // Выполнение стандартных действий (удаление здания, эффекты и т.п.)
-  // ...
+  // Проверяем, что здание существует в gameState
+  if (!gameState.buildings.includes(building)) return;
 
-  // Маркируем зону, где здание было расположено
-  markConstructionFailure(building.x, building.y);
+  // Если уничтожено оборонительное сооружение, останавливаем его активность
+  if (building.type === "turret" || building.type === "turret2") {
+    building.active = false;
+    if (building.turretCycleId) {
+      cancelAnimationFrame(building.turretCycleId);
+      building.turretCycleId = null;
+    }
+  }
+
+  // Удаление здания из массива зданий
+  gameState.buildings = gameState.buildings.filter(b => b !== building);
+
+  // Запуск визуального эффекта разрушения здания
+  spawnDestructionFragments(building.x, building.y, building.width, building.height, building.type);
+
+  // Начисляем очки GEO за уничтожение здания ИИ
+  if (building.owner === "ai") {
+    const points = SCORE_VALUES[building.type] || 0;
+    gameState.playerScore += points;
+    updateScoreUI();
+  }
+
+  // Очистка ссылок на здание (квадродерево и др. структуры)
+  if (typeof cleanUpBuildingReferences === 'function') {
+    cleanUpBuildingReferences();
+  }
+
+  // Если нужны дополнительные действия (например, логика ИИ при потере здания), добавьте их сюда:
+   reactToAttack();
+   mobilizeDefendersAround(building);
 }
+
 
 // В функции проверки неудачных построек (например, checkAndSellUnprofitableBuildings),
 // если здание находится в опасной зоне, его можно продать, и его координаты добавить в soldBuildings
