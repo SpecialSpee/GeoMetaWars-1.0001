@@ -921,38 +921,37 @@ function aiEnqueueMilitaryUnit(unitType, building) {
 function processAIMilitaryProductionQueue() {
   const now = performance.now();
   gameState.buildings.forEach(building => {
-    if (building.owner === "ai" && building.productionQueue?.length > 0) {
-      const order = building.productionQueue[0];
+    if (building.owner !== "ai" || !building.productionQueue || building.productionQueue.length === 0) {
+      return;
+    }
 
-      if (now >= order.timeStart + order.productionTime) {
-        const unitCost = (order.unitType === "fighter") ? FIGHTER_COST :
-                         (order.unitType === "assault") ? ASSAULT_COST :
-                         (order.unitType === "elite") ? ELITE_COST : null;
+    const order = building.productionQueue[0];
 
-        if (unitCost && canSpendResources(unitCost, "ai")) {
-          gameState.aiResources.gold -= unitCost.gold;
-          gameState.aiResources.silicon -= unitCost.silicon;
-          gameState.aiResources.plasma -= unitCost.plasma;
-          updateResourceUI();
+    if (now >= order.timeStart + order.productionTime) {
+      const unitCost = (order.unitType === "fighter") ? FIGHTER_COST :
+                       (order.unitType === "assault") ? ASSAULT_COST :
+                       (order.unitType === "elite") ? ELITE_COST : null;
 
-          const { spawn, target } = spawnAtBoundary(building, 10);
-          const unit = new Unit(order.unitType, "ai", spawn.x, spawn.y);
-          gameState.units.push(unit);
-          moveUnit(unit, target.x, target.y, () => {
-            if (order.unitType === "fighter") startFighterCycle(unit);
-            else startAssaultEliteCycle(unit);
-          });
+      if (unitCost && canSpendResources(unitCost, "ai")) {
+        gameState.aiResources.gold -= unitCost.gold;
+        gameState.aiResources.silicon -= unitCost.silicon;
+        gameState.aiResources.plasma -= unitCost.plasma;
+        updateResourceUI();
 
-          building.productionQueue.shift(); // Убираем заказ после успешного выполнения
-        } else {
-          //console.log(`ИИ не хватает ресурсов для создания ${order.unitType}. Повторим попытку позже.`);
-          order.timeStart = now + 2000; // Откладываем проверку на 2 секунды
-          // НЕ удаляем заказ, просто обновляем время начала следующей попытки
-        }
+        const { spawn, target } = spawnAtBoundary(building, 10);
+        const unit = new Unit(order.unitType, building.owner, spawn.x, spawn.y);
+        gameState.units.push(unit);
+        moveUnit(unit, target.x, target.y, () => {
+          if (order.unitType === "fighter") startFighterCycle(unit);
+          else startAssaultEliteCycle(unit);
+        });
+
+        building.productionQueue.shift();
       }
     }
   });
 }
+
 
 
 

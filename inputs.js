@@ -708,24 +708,34 @@ function hireEliteForPlayer(barracks3) {
 
 
 function processProductionQueue(building) {
-  if (!building || !building.productionQueue || building.productionQueue.length === 0) return;
+  // Гарантия вызова только для зданий игрока
+  if (!building || building.owner !== "player" || !building.productionQueue || building.productionQueue.length === 0) return;
 
   const now = performance.now();
-  const order = building.productionQueue[0]; // Всегда берём только первый заказ из очереди
+  const order = building.productionQueue[0]; // Первый заказ из очереди
   const elapsed = now - order.timeStart;
 
   if (elapsed >= order.productionTime) {
     const { spawn, target } = spawnAtBoundary(building, 10);
-    const unit = new Unit(order.unitType, "player", spawn.x, spawn.y);
+    
+    // Создаём юнита, чётко используя владельца здания
+    const unit = new Unit(order.unitType, building.owner, spawn.x, spawn.y);
     gameState.units.push(unit);
-    moveUnit(unit, target.x, target.y, () => startFighterCycle(unit));
 
-    building.productionQueue.shift(); // Убираем выполненный заказ
+    // Назначаем соответствующий цикл юнита
+    if (unit.type === "fighter") {
+      moveUnit(unit, target.x, target.y, () => startFighterCycle(unit));
+    } else if (unit.type === "assault" || unit.type === "elite") {
+      moveUnit(unit, target.x, target.y, () => startAssaultEliteCycle(unit));
+    } else {
+      moveUnit(unit, target.x, target.y);
+    }
 
-    // ✅ ВАЖНОЕ ДОПОЛНЕНИЕ:
-    // Пересчитываем время старта для всех оставшихся заказов:
+    building.productionQueue.shift(); // Убираем выполненный заказ из очереди
+
+    // ✅ ВАЖНОЕ ДОПОЛНЕНИЕ (ПЕРЕСЧЁТ ВРЕМЕНИ СТАРТА):
     if (building.productionQueue.length > 0) {
-      building.productionQueue[0].timeStart = now; // Ставим время старта следующего заказа на текущее время
+      building.productionQueue[0].timeStart = now; // Старт следующего заказа немедленно
       for (let i = 1; i < building.productionQueue.length; i++) {
         const prevOrder = building.productionQueue[i - 1];
         building.productionQueue[i].timeStart = prevOrder.timeStart + prevOrder.productionTime;
@@ -733,6 +743,7 @@ function processProductionQueue(building) {
     }
   }
 }
+
 
 
 
